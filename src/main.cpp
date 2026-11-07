@@ -120,7 +120,7 @@ int main(int argc, char **argv) {
                                            &notoSansConfig);
 
 
-  auto graph = make_graph();
+  auto graph = make_graph(argc > 1 ? argv[1] : "mapmanager.sm");
   // Main loop
   while (glfwWindowShouldClose(main_window) == GL_FALSE) {
     // Poll for and process events
@@ -131,7 +131,8 @@ int main(int argc, char **argv) {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
     draw_dockspace();
-    render_graph(graph);
+    render_graph(std::move(graph));
+    graph.reset();
 
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -267,11 +268,83 @@ std::optional<dot_layout::DirectedGraph> make_graph(const std::string& input_fil
         return std::nullopt;
     }
 
-    // Populate the graph based on the FSM here
     dot_layout::DirectedGraph graph;
-    const auto& maps = fsm->maps;
-    for (const auto& map : maps) {}
-    return graph.empty() ? std::nullopt : std::optional<dot_layout::DirectedGraph>{graph};
+    std::vector<std::vector<std::string>> state_ids;
+    for (const auto& map : fsm->maps) {
+        dot_layout::Cluster cluster{map.name, map.name, {}, std::nullopt};
+        std::vector<std::string> ids;
+        for (const auto& state : map.states) {
+            const std::string id = "state_" + std::to_string(graph.nodes.size());
+            graph.nodes.push_back({id, state.name,
+                map.name + "::" + state.name == fsm->start_state
+                    ? dot_layout::NodeShape::Ellipse : dot_layout::NodeShape::Box});
+            cluster.nodes.push_back(id);
+            ids.push_back(id);
+        }
+        if (cluster.nodes.empty()) {
+            std::cerr << input_file << ": state map '" << map.name
+                      << "' has no states; cannot lay out an empty cluster\n";
+            return std::nullopt;
+        }
+        graph.clusters.push_back(std::move(cluster));
+        state_ids.push_back(std::move(ids));
+    }
+
+    const auto resolve_state = [&](const std::string& name, const std::string& current_map)
+        -> std::optional<std::string> {
+        const auto separator = name.find("::");
+        const std::string map_name = separator == std::string::npos
+            ? current_map : name.substr(0, separator);
+        const std::string state_name = separator == std::string::npos
+            ? name : name.substr(separator + 2);
+        for (std::size_t i = 0; i < fsm->maps.size(); ++i) {
+            if (fsm->maps[i].name != map_name)
+                continue;
+            for (std::size_t j = 0; j < fsm->maps[i].states.size(); ++j)
+                if (fsm->maps[i].states[j].name == state_name)
+                    return state_ids[i][j];
+        }
+        return std::nullopt;
+    };
+    for (std::size_t map_index = 0; map_index < fsm->maps.size(); ++map_index) {
+        const auto& map = fsm->maps[map_index];
+        for (std::size_t state_index = 0; state_index < map.states.size(); ++state_index) {
+            const auto& state = map.states[state_index];
+            const auto& source = state_ids[map_index][state_index];
+            for (const auto& transition : state.transitions) {
+                for (const auto& guard : transition.guards) {
+                    std::string target = source;
+                    if (guard.transition_type != "pop") {
+                        const auto& destination = guard.transition_type == "push"
+                            ? guard.push_state : guard.end_state;
+                        if (destination != "nil") {
+                            const auto resolved = resolve_state(destination, map.name);
+                            if (!resolved) {
+                                std::cerr << input_file << ": cannot resolve destination '"
+                                          << destination << "' in map '" << map.name << "'\n";
+                                return std::nullopt;
+                            }
+                            target = *resolved;
+                        }
+                    }
+
+                    std::string label = transition.name + "(" + transition.parameters + ")";
+                    if (!guard.condition.empty())
+                        label += " [" + guard.condition + "]";
+                    if (guard.transition_type == "push")
+                        label += " / " + guard.end_state + "/push(" + guard.push_state + ")";
+                    else if (guard.transition_type == "pop")
+                        label += " / pop(" + guard.pop_arguments + ") [dynamic destination]";
+                    else if (guard.transition_type == "jump")
+                        label += " / jump(" + guard.end_state + ")";
+                    if (!guard.actions.empty())
+                        label += " {" + guard.actions + "}";
+                    graph.edges.push_back({source, target, std::move(label)});
+                }
+            }
+        }
+    }
+    return graph;
 }
 
 void render_graph(std::optional<dot_layout::DirectedGraph> graph_in) {
@@ -359,7 +432,7 @@ void render_graph(std::optional<dot_layout::DirectedGraph> graph_in) {
                 for (std::size_t i = 0; i < graph.nodes.size(); ++i) {
                     auto& node = graph.nodes[i];
                     ImGui::PushID(static_cast<int>(i));
-                    if (ImGui::BeginCombo(node.id.c_str(), shape_names[static_cast<int>(node.shape)])) {
+                    if (ImGui::BeginCombo(node.label.c_str(), shape_names[static_cast<int>(node.shape)])) {
                         for (std::size_t j = 0; j < 4; ++j) {
                             const bool selected = node.shape == shapes[j];
                             if (ImGui::Selectable(shape_names[j], selected))
@@ -377,7 +450,14 @@ void render_graph(std::optional<dot_layout::DirectedGraph> graph_in) {
                 for (std::size_t i = 0; i < graph.edges.size(); ++i) {
                     auto& edge = graph.edges[i];
                     ImGui::PushID(static_cast<int>(i));
-                    const std::string name = edge.from + " -> " + edge.to +
+                    const auto label_for = [&](const std::string& id) -> const std::string& {
+                        const auto node = std::find_if(graph.nodes.begin(), graph.nodes.end(),
+                            [&](const auto& candidate) { return candidate.id == id; });
+                        if (node == graph.nodes.end())
+                            throw std::runtime_error("Edge endpoint is missing from graph");
+                        return node->label;
+                    };
+                    const std::string name = label_for(edge.from) + " -> " + label_for(edge.to) +
                         " (" + std::to_string(i + 1) + ")";
                     ImGui::SetNextItemWidth(100.0f);
                     ImGui::DragInt(name.c_str(), &edge.weight, 1.0f, 1, 1000,
@@ -450,12 +530,14 @@ void render_graph(std::optional<dot_layout::DirectedGraph> graph_in) {
 
         // Draw nodes
         draw_list->ChannelsSetCurrent(2);
-        for (const auto& node : layout.nodes) {
+        for (std::size_t i = 0; i < layout.nodes.size(); ++i) {
+            const auto& node = layout.nodes[i];
+            const auto& label = graph.nodes[i].label;
             const float x = origin.x + (node.center.x - layout.bounds.min_x) * scale;
             const float y = origin.y + (layout.bounds.max_y - node.center.y) * scale;
             const float width = node.width * scale;
             const float height = node.height * scale;
-            const ImVec2 label_size = ImGui::CalcTextSize(node.id.c_str());
+            const ImVec2 label_size = ImGui::CalcTextSize(label.c_str());
             const ImVec2 label_pos(x - label_size.x * 0.5f, y - label_size.y * 0.5f);
             const ImVec2 tl(x - width * 0.5f, y - height * 0.5f);
             const ImVec2 br(x + width * 0.5f, y + height * 0.5f);
@@ -466,7 +548,7 @@ void render_graph(std::optional<dot_layout::DirectedGraph> graph_in) {
                 draw_list->AddEllipseFilled(ImVec2(x, y), ImVec2(width * 0.5f, height * 0.5f), node_col);
             }
             if (node.shape != dot_layout::NodeShape::Point)
-                draw_list->AddText(label_pos, text_col, node.id.c_str());
+                draw_list->AddText(label_pos, text_col, label.c_str());
         }
         
         // Draw edges

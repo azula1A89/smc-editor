@@ -1,0 +1,30 @@
+%start Main::Ready
+%class ExampleContext
+%header ExampleContext.h
+%map Main
+%%
+Ready
+{
+    go(value: int) [value > 0] Other::Ready { record(value); }
+                   [value <= 0] Ready { reject(); }
+    wait nil {}
+    call Ready/push(Other::Ready) { prepare(); }
+    direct push(Ready) {}
+    back pop(done(1)) { cleanup(); }
+    switch jump(Other::Done) {}
+}
+OtherState
+{
+}
+%%
+%map Other
+%%
+Ready
+{
+    next Done {}
+}
+Done
+{
+    reset Main::Ready {}
+}
+%%

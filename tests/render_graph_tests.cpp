@@ -11,7 +11,8 @@ void require(bool condition, const char* message) {
         throw std::runtime_error(message);
 }
 
-void frame(float x, float y, std::optional<bool> mouse = std::nullopt) {
+void frame(float x, float y, std::optional<bool> mouse = std::nullopt,
+           std::optional<dot_layout::DirectedGraph> graph = std::nullopt) {
     ImGuiIO& io = ImGui::GetIO();
     io.AddMousePosEvent(x, y);
     if (mouse)
@@ -19,7 +20,7 @@ void frame(float x, float y, std::optional<bool> mouse = std::nullopt) {
     ImGui::NewFrame();
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(900, 600), ImGuiCond_Always);
-    render_graph();
+    render_graph(std::move(graph));
     ImGui::Render();
 }
 
@@ -70,7 +71,7 @@ std::uint64_t canvasGeometry() {
 void checkClusterBorders() {
     const dot_layout::DirectedGraph graph{
         {{"a", "A"}, {"b", "B"}, {"c", "C"}},
-        {{"a", "b", "", 1, "inner", "right"}, {"b", "c", ""}},
+        {{"a", "b", "a->b", 1, "inner", "right"}, {"b", "c", "b->c"}},
         {{"inner", "Inner", {"a"}, "outer"},
          {"right", "Right", {"b"}, std::nullopt},
          {"outer", "Outer", {"c"}, std::nullopt}}};
@@ -162,6 +163,17 @@ int main() {
         click(default_ratio.x, default_ratio.y);
         frame(800, 500);
         require(canvasGeometry() == original, "Default ratio did not restore canvas");
+        click(settings_button.x, settings_button.y);
+        const auto fsm_graph = make_graph(std::string(TEST_SOURCE_DIR) + "/tests/fsm_graph.sm");
+        require(fsm_graph.has_value(), "Could not load FSM for rendering");
+        frame(800, 500, std::nullopt, fsm_graph);
+        const auto fsm_canvas = canvasGeometry();
+        frame(800, 500);
+        require(canvasGeometry() == fsm_canvas, "FSM graph did not persist across frames");
+        auto renamed = *fsm_graph;
+        renamed.nodes[0].label = "A much longer state label";
+        frame(800, 500, std::nullopt, renamed);
+        require(canvasGeometry() != fsm_canvas, "State label did not affect rendering");
         ImGui::DestroyContext();
     } catch (const std::exception& error) {
         std::cerr << "render_graph_tests: " << error.what() << '\n';
