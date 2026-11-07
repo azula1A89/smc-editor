@@ -62,9 +62,9 @@ private:
     bool m_Active = false;
 };
 
-std::optional<std::vector<dot_layout::DirectedGraph>> make_graph(const std::string& input_file = "SmcParser.sm");
+std::optional<dot_layout::DirectedGraph> make_graph(const std::string& input_file = "SmcParser.sm");
 void draw_dockspace();
-void render_graph();
+void render_graph(std::optional<dot_layout::DirectedGraph> graph = std::nullopt);
 
 int main(int argc, char **argv) {
   const char *glsl_version = "#version 330";
@@ -119,6 +119,8 @@ int main(int argc, char **argv) {
                                            notosansSize, 15.0f,
                                            &notoSansConfig);
 
+
+  auto graph = make_graph();
   // Main loop
   while (glfwWindowShouldClose(main_window) == GL_FALSE) {
     // Poll for and process events
@@ -129,7 +131,7 @@ int main(int argc, char **argv) {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
     draw_dockspace();
-    render_graph();
+    render_graph(graph);
 
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -238,7 +240,7 @@ void print_diagnostics(const smc::Diagnostics& diagnostics) {
     }
 }
 
-std::optional<std::vector<dot_layout::DirectedGraph>> make_graph(const std::string& input_file) {
+std::optional<dot_layout::DirectedGraph> make_graph(const std::string& input_file) {
     std::ifstream input(input_file, std::ios::binary);
     if (!input) {
         std::cerr << "smc_cpp: cannot open input file '" << input_file << "'\n";
@@ -266,19 +268,21 @@ std::optional<std::vector<dot_layout::DirectedGraph>> make_graph(const std::stri
     }
 
     // Populate the graph based on the FSM here
-    std::vector<dot_layout::DirectedGraph> graphs;
+    dot_layout::DirectedGraph graph;
     const auto& maps = fsm->maps;
     for (const auto& map : maps) {}
-    return graphs;
+    return graph.empty() ? std::nullopt : std::optional<dot_layout::DirectedGraph>{graph};
 }
 
-void render_graph() {
+void render_graph(std::optional<dot_layout::DirectedGraph> graph_in) {
     static dot_layout::DirectedGraph graph{
       {{"a", "A"}, {"b", "B"}, {"c", "C"}},
-      {{"a", "b", "", 1, "inner", "right"}, {"b", "c", ""}},
+      {{"a", "b", "a->b", 1, "inner", "right"}, {"b", "c", "b->c"}},
       {{"inner", "Inner", {"a"}, "outer"},
        {"right", "Right", {"b"}, std::nullopt},
        {"outer", "Outer", {"c"}, std::nullopt}}};
+    if (graph_in)
+        graph = *graph_in;
     
     ImGui::Begin("canvas", NULL, ImGuiWindowFlags_MenuBar);
     ImDrawList *draw_list = ImGui::GetWindowDrawList();

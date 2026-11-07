@@ -40,6 +40,9 @@ struct DirectedGraph {
   std::vector<Node> nodes;
   std::vector<Edge> edges;
   std::vector<Cluster> clusters;
+  bool empty() const {
+      return nodes.empty() && edges.empty() && clusters.empty();
+  }
 };
 
 enum class RankDirection {
