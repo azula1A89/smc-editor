@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -163,6 +164,156 @@ void testArrowTipsOnNodeBoundaries() {
   }
 }
 
+bool nearBoundary(dot_layout::Point p, const dot_layout::Bounds& b, double tolerance) {
+  return p.x >= b.min_x - tolerance && p.x <= b.max_x + tolerance &&
+         p.y >= b.min_y - tolerance && p.y <= b.max_y + tolerance &&
+         (std::abs(p.x - b.min_x) <= tolerance ||
+          std::abs(p.x - b.max_x) <= tolerance ||
+          std::abs(p.y - b.min_y) <= tolerance ||
+          std::abs(p.y - b.max_y) <= tolerance);
+}
+
+void testClusters() {
+  using namespace dot_layout;
+  DirectedGraph graph{
+      {{"a", "A"}, {"b", "B"}, {"c", "C"}},
+      {{"a", "b", "", 1, "inner", "right"}, {"b", "c", ""}},
+      {{"inner", "Inner", {"a"}, "outer"},
+       {"right", "Right", {"b"}, std::nullopt},
+       {"outer", "Outer", {"c"}, std::nullopt}}};
+  LayoutOptions options;
+  options.compound = true;
+  for (const auto direction : {RankDirection::TopToBottom, RankDirection::LeftToRight,
+                               RankDirection::BottomToTop, RankDirection::RightToLeft}) {
+    for (const bool use_ratio : {false, true}) {
+      options.rank_direction = direction;
+      options.ratio = use_ratio ? std::optional<std::variant<RatioMode, double>>(1.0)
+                                : std::nullopt;
+      const auto result = DotLayout{}.layout(graph, options);
+      require(result.clusters.size() == 3, "Missing clusters");
+      for (std::size_t i = 0; i < result.clusters.size(); ++i) {
+        const auto& cluster = result.clusters[i];
+        require(cluster.id == graph.clusters[i].id && cluster.label &&
+                    cluster.label->text == graph.clusters[i].label,
+                "Missing cluster label");
+        require(cluster.label->center.x >= cluster.bounds.min_x &&
+                    cluster.label->center.x <= cluster.bounds.max_x &&
+                    cluster.label->center.y >= cluster.bounds.min_y &&
+                    cluster.label->center.y <= cluster.bounds.max_y &&
+                    cluster.label->width > 0 && cluster.label->height > 0,
+                "Invalid cluster label geometry");
+      }
+      const auto inner = result.clusters[0].bounds;
+      const auto right = result.clusters[1].bounds;
+      const auto outer = result.clusters[2].bounds;
+      require(inner.min_x >= outer.min_x && inner.max_x <= outer.max_x &&
+                  inner.min_y >= outer.min_y && inner.max_y <= outer.max_y,
+              "Nested cluster is outside parent");
+      require(result.bounds.min_x <= outer.min_x && result.bounds.max_x >= outer.max_x &&
+                  result.bounds.min_y <= outer.min_y && result.bounds.max_y >= outer.max_y,
+              "Layout bounds omit cluster");
+      const auto& edge = result.edges[0];
+      require(!edge.arrow_tips.empty() && edge.arrow_tips[0].has_value(),
+              "Missing compound arrow tip");
+      require(nearBoundary(*edge.arrow_tips[0], right, 1.0),
+              "Compound arrow tip is not on head cluster");
+      require(!edge.spline_points.empty() && !edge.spline_points[0].empty() &&
+                  nearBoundary(edge.spline_points[0].front(), inner, 1.0),
+              "Compound spline does not start on tail cluster");
+    }
+  }
+  graph.edges[0].tail_cluster.reset();
+  auto head_only = DotLayout{}.layout(graph, options);
+  require(nearBoundary(*head_only.edges[0].arrow_tips[0], head_only.clusters[1].bounds, 1.0),
+          "Head-only cluster clipping failed");
+  graph.edges[0].tail_cluster = "inner";
+  graph.edges[0].head_cluster.reset();
+  auto tail_only = DotLayout{}.layout(graph, options);
+  require(nearBoundary(tail_only.edges[0].spline_points[0].front(), tail_only.clusters[0].bounds, 1.0),
+          "Tail-only cluster clipping failed");
+  graph.edges[0].head_cluster = "right";
+  options.compound = false;
+  requireInvalidArgument([&] { DotLayout{}.layout(graph, options); },
+                         "Cluster endpoints accepted without compound");
+  options.compound = true;
+  graph.edges[0].head_cluster = "outer";
+  requireInvalidArgument([&] { DotLayout{}.layout(graph, options); },
+                         "Invalid head cluster accepted");
+  graph.edges[0].head_cluster = "missing";
+  requireInvalidArgument([&] { DotLayout{}.layout(graph, options); },
+                         "Unknown cluster accepted");
+  graph.edges[0].head_cluster = "right";
+  graph.clusters[2].parent = "inner";
+  requireInvalidArgument([&] { DotLayout{}.layout(graph, options); },
+                         "Cluster cycle accepted");
+  graph.clusters[2].parent.reset();
+  graph.clusters[2].nodes.push_back("a");
+  requireInvalidArgument([&] { DotLayout{}.layout(graph, options); },
+                         "Duplicate cluster membership accepted");
+  graph.clusters[2].nodes.pop_back();
+  graph.clusters[2].nodes.push_back("missing");
+  requireInvalidArgument([&] { DotLayout{}.layout(graph, options); },
+                         "Unknown cluster node accepted");
+  graph.clusters[2].nodes.pop_back();
+  graph.clusters.push_back({"empty", "", {}});
+  requireInvalidArgument([&] { DotLayout{}.layout(graph, options); },
+                         "Empty cluster accepted");
+  graph.clusters.pop_back();
+  graph.clusters[0].label.clear();
+  require(!DotLayout{}.layout(graph, options).clusters[0].label,
+          "Empty cluster label should not be returned");
+}
+
+void testRatio() {
+  using namespace dot_layout;
+  const DirectedGraph graph{{{"a", "A"}, {"b", "B"}, {"c", "C"}, {"d", "D"}},
+                            {{"a", "b", ""}, {"a", "c", ""}, {"b", "d", ""}}};
+  LayoutOptions options;
+  const auto baseline = DotLayout{}.layout(graph, options);
+  options.ratio = 1.0;
+  const auto square = DotLayout{}.layout(graph, options);
+  const double width = square.bounds.max_x - square.bounds.min_x;
+  const double height = square.bounds.max_y - square.bounds.min_y;
+  const double baseline_ratio = (baseline.bounds.max_x - baseline.bounds.min_x) /
+                                (baseline.bounds.max_y - baseline.bounds.min_y);
+  require(std::abs(width / height - 1.0) < std::abs(baseline_ratio - 1.0),
+          "Numeric ratio did not improve aspect ratio");
+  for (const auto mode : {RatioMode::Fill, RatioMode::Compress, RatioMode::Expand}) {
+    options.ratio = mode;
+    requireInvalidArgument([&] { DotLayout{}.layout(graph, options); },
+                           "Named ratio without size accepted");
+    options.size = Size{8.0, 6.0};
+    const auto result = DotLayout{}.layout(graph, options);
+    require(result.nodes.size() == graph.nodes.size(), "Named ratio layout failed");
+    if (mode == RatioMode::Fill) {
+      const auto w = result.bounds.max_x - result.bounds.min_x;
+      const auto h = result.bounds.max_y - result.bounds.min_y;
+      require(std::abs(w / h - 8.0 / 6.0) < std::abs(baseline_ratio - 8.0 / 6.0),
+              "Fill ratio did not improve aspect ratio");
+    }
+    if (mode == RatioMode::Expand) {
+      require(result.bounds.max_x - result.bounds.min_x >
+                  baseline.bounds.max_x - baseline.bounds.min_x,
+              "Expand ratio did not enlarge layout");
+    }
+    options.size.reset();
+  }
+  for (double value : {0.0, -1.0, std::numeric_limits<double>::infinity(),
+                       std::numeric_limits<double>::quiet_NaN()}) {
+    options.ratio = value;
+    requireInvalidArgument([&] { DotLayout{}.layout(graph, options); },
+                           "Invalid ratio accepted");
+  }
+  options.ratio.reset();
+  options.size = Size{0, 1};
+  requireInvalidArgument([&] { DotLayout{}.layout(graph, options); },
+                         "Invalid size accepted");
+  options.size.reset();
+  options.ratio = static_cast<RatioMode>(-1);
+  requireInvalidArgument([&] { DotLayout{}.layout(graph, options); },
+                         "Invalid ratio mode accepted");
+}
+
 } // namespace
 
 int main() {
@@ -172,6 +323,8 @@ int main() {
     testWeightAffectsLayout();
     testDefaultWeight();
     testArrowTipsOnNodeBoundaries();
+    testClusters();
+    testRatio();
   } catch (const std::exception& error) {
     std::cerr << "dot_layout_tests: " << error.what() << '\n';
     return 1;

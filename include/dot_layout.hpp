@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace dot_layout {
@@ -24,11 +25,21 @@ struct Edge {
   std::string to;
   std::string label;
   int weight = 1;
+  std::optional<std::string> tail_cluster;
+  std::optional<std::string> head_cluster;
+};
+
+struct Cluster {
+  std::string id;
+  std::string label;
+  std::vector<std::string> nodes;
+  std::optional<std::string> parent;
 };
 
 struct DirectedGraph {
   std::vector<Node> nodes;
   std::vector<Edge> edges;
+  std::vector<Cluster> clusters;
 };
 
 enum class RankDirection {
@@ -38,10 +49,24 @@ enum class RankDirection {
   RightToLeft,
 };
 
+enum class RatioMode {
+  Fill,
+  Compress,
+  Expand,
+};
+
+struct Size {
+  double width;
+  double height;
+};
+
 struct LayoutOptions {
   RankDirection rank_direction = RankDirection::LeftToRight;
   double rank_separation = 0.5;
   double node_separation = 0.25;
+  bool compound = false;
+  std::optional<std::variant<RatioMode, double>> ratio;
+  std::optional<Size> size;
 };
 
 struct Point {
@@ -79,10 +104,17 @@ struct Bounds {
   double max_y = 0.0;
 };
 
+struct ClusterLayout {
+  std::string id;
+  Bounds bounds;
+  std::optional<EdgeLabelLayout> label;
+};
+
 struct LayoutResult {
   std::vector<NodeLayout> nodes;
   std::vector<EdgeLayout> edges;
   Bounds bounds;
+  std::vector<ClusterLayout> clusters;
 };
 
 class DotLayout {

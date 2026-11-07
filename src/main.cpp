@@ -1,6 +1,9 @@
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>
+#include <optional>
+#include <fstream>
+#include <iostream>
 
 #include <imgui_freetype.h>
 #include <imgui.h>
@@ -59,6 +62,7 @@ private:
     bool m_Active = false;
 };
 
+std::optional<std::vector<dot_layout::DirectedGraph>> make_graph(const std::string& input_file = "SmcParser.sm");
 void draw_dockspace();
 void render_graph();
 
@@ -211,33 +215,96 @@ void draw_spline_with_arrow(ImDrawList *draw_list, const std::vector<ImVec2> &sp
     }
 }
 
+void drag_positive_value(const char* label, float& value, float speed) {
+    float edited = value;
+    if (ImGui::DragFloat(label, &edited, speed, 0.01f, 100.0f,
+                         "%.2f", ImGuiSliderFlags_AlwaysClamp)) {
+        if (std::isfinite(edited) && edited > 0.0f) {
+            value = edited;
+        } else {
+            std::cerr << label << " must be positive and finite\n";
+        }
+    }
+}
+
+void print_diagnostics(const smc::Diagnostics& diagnostics) {
+    for (const auto& diagnostic : diagnostics) {
+        const char* severity = diagnostic.severity == smc::DiagnosticSeverity::error
+                                   ? "error"
+                                   : "warning";
+        std::cerr << diagnostic.location.file << ':' << diagnostic.location.line << ':'
+                  << diagnostic.location.column << ": " << severity << ": "
+                  << diagnostic.message << '\n';
+    }
+}
+
+std::optional<std::vector<dot_layout::DirectedGraph>> make_graph(const std::string& input_file) {
+    std::ifstream input(input_file, std::ios::binary);
+    if (!input) {
+        std::cerr << "smc_cpp: cannot open input file '" << input_file << "'\n";
+        return std::nullopt;
+    }
+    const std::string contents((std::istreambuf_iterator<char>(input)),
+                               std::istreambuf_iterator<char>());
+    if (input.bad()) {
+        std::cerr << "smc_cpp: failed while reading input file '" << input_file << "'\n";
+        return std::nullopt;
+    }
+
+    smc::Diagnostics diagnostics;
+    smc::Parser parser(contents, input_file, diagnostics);
+    const auto fsm = parser.parse();
+    if (!fsm) {
+        print_diagnostics(diagnostics);
+        return std::nullopt;
+    }
+
+    smc::SyntaxChecker checker(diagnostics);
+    if (!checker.check(*fsm, "c++")) {
+        print_diagnostics(diagnostics);
+        return std::nullopt;
+    }
+
+    // Populate the graph based on the FSM here
+    std::vector<dot_layout::DirectedGraph> graphs;
+    const auto& maps = fsm->maps;
+    for (const auto& map : maps) {}
+    return graphs;
+}
+
 void render_graph() {
     static dot_layout::DirectedGraph graph{
-      {{"source", "Source"}, {"parse", "Parse"}, {"validate", "Validate"},
-       {"render", "Render"}},
-      {{"source", "parse", "read file"},
-       {"parse", "validate", "AST"},
-       {"parse", "parse", "error"},
-       {"parse", "parse", "warning"},
-       {"validate", "render", "valid"},
-       {"validate", "validate", "not valid"},
-       {"parse", "render", "invalid"}}};
+      {{"a", "A"}, {"b", "B"}, {"c", "C"}},
+      {{"a", "b", "", 1, "inner", "right"}, {"b", "c", ""}},
+      {{"inner", "Inner", {"a"}, "outer"},
+       {"right", "Right", {"b"}, std::nullopt},
+       {"outer", "Outer", {"c"}, std::nullopt}}};
     
     ImGui::Begin("canvas", NULL, ImGuiWindowFlags_MenuBar);
-    static ImDrawList *draw_list = ImGui::GetWindowDrawList();
-    draw_list->ChannelsSplit(2);
+    ImDrawList *draw_list = ImGui::GetWindowDrawList();
+    draw_list->ChannelsSplit(3);
     ImGuiStyle &style = ImGui::GetStyle();
     static auto origin = ImGui::GetCursorScreenPos();
     static float& scale = style.FontScaleMain;
-    static dot_layout::LayoutOptions options;
+    static dot_layout::LayoutOptions options = [] {
+        dot_layout::LayoutOptions initial;
+        initial.compound = true;
+        return initial;
+    }();
     static float rank_separation = 4.0f;
     static float node_separation = 1.0f;
     static float arrow_size = 10.0f;
+    enum class RatioSelection { Default, Fill, Compress, Expand, Numeric };
+    static RatioSelection ratio_selection = RatioSelection::Default;
+    static float ratio_value = 1.0f;
+    static float size_width = 8.0f;
+    static float size_height = 6.0f;
     const ImColor text_col = ImGui::GetStyle().Colors[ImGuiCol_Text];
     const ImColor line_col = ImGui::GetStyle().Colors[ImGuiCol_PlotLines];
     ImColor node_col = ImGui::GetStyle().Colors[ImGuiCol_FrameBg];node_col.Value.w = 1.0f;
 
-    if ( ImGui::IsMouseDragging(0) ) {
+    if (ImGui::IsWindowHovered() &&
+        ImGui::IsMouseDragging(0)) {
         const ImVec2 drag_delta = ImGui::GetIO().MouseDelta;
         origin.x += drag_delta.x;
         origin.y += drag_delta.y;
@@ -258,6 +325,28 @@ void render_graph() {
             ImGui::DragFloat("Rank Separation", &rank_separation, 0.01f, 0.01f, 100.0f);
             ImGui::DragFloat("Node Separation", &node_separation, 0.01f, 0.01f, 100.0f);
             ImGui::DragFloat("Arrow Size", &arrow_size, 0.01f, 0.0f, 100.0f);
+            ImGui::Checkbox("Compound", &options.compound);
+            if (ImGui::BeginMenu("Ratio")) {
+                if (ImGui::RadioButton("Default", ratio_selection == RatioSelection::Default))
+                    ratio_selection = RatioSelection::Default;
+                if (ImGui::RadioButton("Fill", ratio_selection == RatioSelection::Fill))
+                    ratio_selection = RatioSelection::Fill;
+                if (ImGui::RadioButton("Compress", ratio_selection == RatioSelection::Compress))
+                    ratio_selection = RatioSelection::Compress;
+                if (ImGui::RadioButton("Expand", ratio_selection == RatioSelection::Expand))
+                    ratio_selection = RatioSelection::Expand;
+                if (ImGui::RadioButton("Numeric", ratio_selection == RatioSelection::Numeric))
+                    ratio_selection = RatioSelection::Numeric;
+                if (ratio_selection == RatioSelection::Numeric)
+                    drag_positive_value("Height / width", ratio_value, 0.01f);
+                if (ratio_selection == RatioSelection::Fill ||
+                    ratio_selection == RatioSelection::Compress ||
+                    ratio_selection == RatioSelection::Expand) {
+                    drag_positive_value("Width (in)", size_width, 0.05f);
+                    drag_positive_value("Height (in)", size_height, 0.05f);
+                }
+                ImGui::EndMenu();
+            }
             if (ImGui::BeginMenu("Node shapes")) {
                 constexpr dot_layout::NodeShape shapes[] = {
                     dot_layout::NodeShape::Box, dot_layout::NodeShape::Circle,
@@ -299,11 +388,31 @@ void render_graph() {
     }
     options.rank_separation = rank_separation;
     options.node_separation = node_separation;
-
-    const auto layout = dot_layout::DotLayout{}.layout(graph, options);
-    if (layout.nodes.size() != graph.nodes.size()) {
-        throw std::runtime_error("Layout result is missing nodes");
+    options.size.reset();
+    switch (ratio_selection) {
+    case RatioSelection::Default: options.ratio.reset(); break;
+    case RatioSelection::Numeric: options.ratio = static_cast<double>(ratio_value); break;
+    case RatioSelection::Fill:
+    case RatioSelection::Compress:
+    case RatioSelection::Expand:
+        options.size = dot_layout::Size{size_width, size_height};
+        if (ratio_selection == RatioSelection::Fill)
+            options.ratio = dot_layout::RatioMode::Fill;
+        else if (ratio_selection == RatioSelection::Compress)
+            options.ratio = dot_layout::RatioMode::Compress;
+        else
+            options.ratio = dot_layout::RatioMode::Expand;
+        break;
     }
+
+    auto layout_graph = graph;
+    if (!options.compound) {
+        for (auto& edge : layout_graph.edges) {
+            edge.tail_cluster.reset();
+            edge.head_cluster.reset();
+        }
+    }
+    const auto layout = dot_layout::DotLayout{}.layout(layout_graph, options);
 
     auto to_screen = [&](dot_layout::Point point) {
     return ImVec2( origin.x + (point.x - layout.bounds.min_x) * scale, 
@@ -321,8 +430,22 @@ void render_graph() {
     {
         FontSize font_size(14.0f);
 
+        draw_list->ChannelsSetCurrent(0);
+        for (const auto& cluster : layout.clusters) {
+            const ImVec2 top_left = to_screen({cluster.bounds.min_x, cluster.bounds.max_y});
+            const ImVec2 bottom_right = to_screen({cluster.bounds.max_x, cluster.bounds.min_y});
+            draw_list->AddRect(top_left, bottom_right, line_col);
+            if (cluster.label) {
+                const ImVec2 center = to_screen(cluster.label->center);
+                const ImVec2 text_size = ImGui::CalcTextSize(cluster.label->text.c_str());
+                draw_list->AddText(ImVec2(center.x - text_size.x * 0.5f,
+                                         center.y - text_size.y * 0.5f),
+                                   text_col, cluster.label->text.c_str());
+            }
+        }
+
         // Draw nodes
-        draw_list->ChannelsSetCurrent(1);
+        draw_list->ChannelsSetCurrent(2);
         for (const auto& node : layout.nodes) {
             const float x = origin.x + (node.center.x - layout.bounds.min_x) * scale;
             const float y = origin.y + (layout.bounds.max_y - node.center.y) * scale;
@@ -343,7 +466,7 @@ void render_graph() {
         }
         
         // Draw edges
-        draw_list->ChannelsSetCurrent(0);
+        draw_list->ChannelsSetCurrent(1);
         for (const auto& edge : layout.edges) {
             for (std::size_t i = 0; i < edge.spline_points.size(); ++i) {
                 auto spl = spline_to_screen(edge.spline_points[i]);

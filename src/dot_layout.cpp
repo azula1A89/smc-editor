@@ -8,7 +8,12 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <functional>
+#include <iomanip>
+#include <limits>
+#include <locale>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -76,6 +81,28 @@ const char* nodeShapeName(NodeShape shape) {
     return "point";
   }
   throw std::invalid_argument("Unknown node shape");
+}
+
+std::string numberString(double value) {
+  std::ostringstream stream;
+  stream.imbue(std::locale::classic());
+  stream << std::setprecision(std::numeric_limits<double>::max_digits10) << value;
+  return stream.str();
+}
+
+std::string ratioName(const std::variant<RatioMode, double>& ratio) {
+  if (const auto* value = std::get_if<double>(&ratio)) {
+    if (!std::isfinite(*value) || *value <= 0.0) {
+      throw std::invalid_argument("Ratio must be positive and finite");
+    }
+    return numberString(*value);
+  }
+  switch (std::get<RatioMode>(ratio)) {
+  case RatioMode::Fill: return "fill";
+  case RatioMode::Compress: return "compress";
+  case RatioMode::Expand: return "expand";
+  }
+  throw std::invalid_argument("Unknown ratio mode");
 }
 
 void setAttribute(void* object, const char* name, const std::string& value) {
@@ -151,6 +178,18 @@ LayoutResult DotLayout::layout(const DirectedGraph& input,
       options.node_separation <= 0.0) {
     throw std::invalid_argument("Layout separations must be positive and finite");
   }
+  if (options.ratio) {
+    ratioName(*options.ratio);
+    if (std::holds_alternative<RatioMode>(*options.ratio) && !options.size) {
+      throw std::invalid_argument("Named ratio modes require a size");
+    }
+  }
+  if (options.size && (!std::isfinite(options.size->width) ||
+                       !std::isfinite(options.size->height) ||
+                       options.size->width <= 0.0 ||
+                       options.size->height <= 0.0)) {
+    throw std::invalid_argument("Size dimensions must be positive and finite");
+  }
 
   std::unordered_map<std::string, std::size_t> node_indices;
   node_indices.reserve(input.nodes.size());
@@ -161,6 +200,56 @@ LayoutResult DotLayout::layout(const DirectedGraph& input,
     }
     nodeShapeName(input.nodes[i].shape);
   }
+  std::unordered_map<std::string, std::size_t> cluster_indices;
+  for (std::size_t i = 0; i < input.clusters.size(); ++i) {
+    const auto& id = input.clusters[i].id;
+    if (id.empty() || !cluster_indices.emplace(id, i).second) {
+      throw std::invalid_argument("Cluster IDs must be non-empty and unique");
+    }
+  }
+  std::vector<std::optional<std::size_t>> parents(input.clusters.size());
+  std::vector<int> visit(input.clusters.size(), 0);
+  for (std::size_t i = 0; i < input.clusters.size(); ++i) {
+    if (input.clusters[i].parent) {
+      const auto parent = cluster_indices.find(*input.clusters[i].parent);
+      if (parent == cluster_indices.end())
+        throw std::invalid_argument("Cluster parent does not exist");
+      parents[i] = parent->second;
+    }
+  }
+  std::function<void(std::size_t)> validateParent = [&](std::size_t i) {
+    if (visit[i] == 1)
+      throw std::invalid_argument("Cluster parent cycle");
+    if (visit[i] == 2)
+      return;
+    visit[i] = 1;
+    if (parents[i])
+      validateParent(*parents[i]);
+    visit[i] = 2;
+  };
+  for (std::size_t i = 0; i < input.clusters.size(); ++i)
+    validateParent(i);
+  std::vector<std::optional<std::size_t>> node_cluster(input.nodes.size());
+  std::vector<bool> nonempty(input.clusters.size(), false);
+  for (std::size_t i = 0; i < input.clusters.size(); ++i) {
+    for (const auto& id : input.clusters[i].nodes) {
+      const auto node = node_indices.find(id);
+      if (node == node_indices.end() || node_cluster[node->second])
+        throw std::invalid_argument("Cluster nodes must exist and belong to only one cluster");
+      node_cluster[node->second] = i;
+      for (std::optional<std::size_t> current = i; current; current = parents[*current])
+        nonempty[*current] = true;
+    }
+  }
+  for (bool present : nonempty)
+    if (!present)
+      throw std::invalid_argument("Clusters must contain at least one node");
+  const auto contains = [&](std::size_t cluster, std::size_t node) {
+    for (auto current = node_cluster[node]; current; current = parents[*current])
+      if (*current == cluster)
+        return true;
+    return false;
+  };
   for (const auto& edge : input.edges) {
     if (node_indices.find(edge.from) == node_indices.end() ||
         node_indices.find(edge.to) == node_indices.end()) {
@@ -169,6 +258,21 @@ LayoutResult DotLayout::layout(const DirectedGraph& input,
     if (edge.weight < 1 || edge.weight > 1000) {
       throw std::invalid_argument("Edge weight must be between 1 and 1000");
     }
+    if ((edge.tail_cluster || edge.head_cluster) && !options.compound)
+      throw std::invalid_argument("Cluster edge endpoints require compound=true");
+    const auto validateEndpoint = [&](const std::optional<std::string>& id,
+                                      const std::string& inside,
+                                      const std::string& outside) {
+      if (!id)
+        return;
+      const auto cluster = cluster_indices.find(*id);
+      if (cluster == cluster_indices.end() ||
+          !contains(cluster->second, node_indices.at(inside)) ||
+          contains(cluster->second, node_indices.at(outside)))
+        throw std::invalid_argument("Cluster endpoint must contain its node and exclude the opposite node");
+    };
+    validateEndpoint(edge.tail_cluster, edge.from, edge.to);
+    validateEndpoint(edge.head_cluster, edge.to, edge.from);
   }
 
   if (input.nodes.empty()) {
@@ -192,6 +296,13 @@ LayoutResult DotLayout::layout(const DirectedGraph& input,
                rankDirectionName(options.rank_direction));
   setAttribute(graph.get(), "ranksep", std::to_string(options.rank_separation));
   setAttribute(graph.get(), "nodesep", std::to_string(options.node_separation));
+  if (options.compound)
+    setAttribute(graph.get(), "compound", "true");
+  if (options.ratio)
+    setAttribute(graph.get(), "ratio", ratioName(*options.ratio));
+  if (options.size)
+    setAttribute(graph.get(), "size", numberString(options.size->width) + "," +
+                                       numberString(options.size->height));
 
   std::vector<Agnode_t*> graph_nodes;
   graph_nodes.reserve(input.nodes.size());
@@ -206,6 +317,26 @@ LayoutResult DotLayout::layout(const DirectedGraph& input,
     graph_nodes.push_back(node);
   }
 
+  std::vector<Agraph_t*> graph_clusters(input.clusters.size(), nullptr);
+  std::function<Agraph_t*(std::size_t)> createCluster = [&](std::size_t i) {
+    if (graph_clusters[i])
+      return graph_clusters[i];
+    Agraph_t* parent = parents[i] ? createCluster(*parents[i]) : graph.get();
+    std::string name = "cluster_" + std::to_string(i);
+    Agraph_t* cluster = agsubg(parent, name.data(), 1);
+    if (!cluster)
+      throw std::runtime_error("Could not add a Graphviz cluster");
+    graph_clusters[i] = cluster;
+    setAttribute(cluster, "label", input.clusters[i].label);
+    for (const auto& id : input.clusters[i].nodes) {
+      if (!agsubnode(cluster, graph_nodes[node_indices.at(id)], 1))
+        throw std::runtime_error("Could not add node to Graphviz cluster");
+    }
+    return cluster;
+  };
+  for (std::size_t i = 0; i < input.clusters.size(); ++i)
+    createCluster(i);
+
   std::vector<Agedge_t*> graph_edges;
   graph_edges.reserve(input.edges.size());
   for (const auto& edge : input.edges) {
@@ -219,6 +350,10 @@ LayoutResult DotLayout::layout(const DirectedGraph& input,
       setAttribute(graph_edge, "label", edge.label);
     }
     setAttribute(graph_edge, "weight", std::to_string(edge.weight));
+    if (edge.tail_cluster)
+      setAttribute(graph_edge, "ltail", agnameof(graph_clusters[cluster_indices.at(*edge.tail_cluster)]));
+    if (edge.head_cluster)
+      setAttribute(graph_edge, "lhead", agnameof(graph_clusters[cluster_indices.at(*edge.head_cluster)]));
     graph_edges.push_back(graph_edge);
   }
 
@@ -259,6 +394,26 @@ LayoutResult DotLayout::layout(const DirectedGraph& input,
     }
   }
 
+  result.clusters.reserve(input.clusters.size());
+  for (std::size_t i = 0; i < input.clusters.size(); ++i) {
+    const boxf box = GD_bb(graph_clusters[i]);
+    const Bounds bounds{box.LL.x, box.LL.y, box.UR.x, box.UR.y};
+    ClusterLayout cluster{input.clusters[i].id, bounds, std::nullopt};
+    if (!input.clusters[i].label.empty()) {
+      const textlabel_t* label = GD_label(graph_clusters[i]);
+      if (label == nullptr || !label->set)
+        throw std::runtime_error("Graphviz did not return cluster label position");
+      cluster.label = EdgeLabelLayout{input.clusters[i].label,
+                                      {label->pos.x, label->pos.y},
+                                      label->dimen.x, label->dimen.y};
+    }
+    result.clusters.push_back(std::move(cluster));
+    result.bounds.min_x = std::min(result.bounds.min_x, bounds.min_x);
+    result.bounds.min_y = std::min(result.bounds.min_y, bounds.min_y);
+    result.bounds.max_x = std::max(result.bounds.max_x, bounds.max_x);
+    result.bounds.max_y = std::max(result.bounds.max_y, bounds.max_y);
+  }
+
   result.edges.reserve(input.edges.size());
   for (std::size_t i = 0; i < input.edges.size(); ++i) {
     const auto& input_edge = input.edges[i];
@@ -284,8 +439,10 @@ LayoutResult DotLayout::layout(const DirectedGraph& input,
         }
         edge_layout.spline_points.push_back(std::move(points));
         if (spline.eflag != 0) {
-          const auto& target = result.nodes[node_indices.at(input_edge.to)];
-          const Point tip = nodeBoundaryPoint(target, {spline.ep.x, spline.ep.y});
+          const Point tip = input_edge.head_cluster
+              ? Point{spline.ep.x, spline.ep.y}
+              : nodeBoundaryPoint(result.nodes[node_indices.at(input_edge.to)],
+                                  {spline.ep.x, spline.ep.y});
           edge_layout.arrow_tips.push_back(tip);
           result.bounds.min_x = std::min(result.bounds.min_x, tip.x);
           result.bounds.min_y = std::min(result.bounds.min_y, tip.y);
