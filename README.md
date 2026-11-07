@@ -24,7 +24,7 @@ sudo apt install build-essential cmake pkg-config python3 gawk flex bison \
 ```sh
 cmake -S . -B build
 cmake --build build --parallel
-ctest --test-dir build -R '^(dot_layout_tests|render_graph_tests|make_graph_tests)$' --output-on-failure
+ctest --test-dir build -R '^(dot_layout_tests|render_graph_tests|make_graph_tests|smc_editor_language_tests)$' --output-on-failure
 ./build/dot_layout_demo tests/fsm_graph.sm
 ```
 
@@ -49,7 +49,9 @@ auto layout = dot_layout::DotLayout{}.layout(graph);
 
 示例的 `settings` 菜单提供逐节点形状、逐边权重、Compound 开关和 Ratio 设置。关闭 Compound 时，示例暂时将边连接到节点而不是 cluster；重新开启后恢复边的 cluster 端点。Ratio 可选择默认、Fill、Compress、Expand 或数值模式；命名模式可设置宽高（英寸）。边控件编号用于区分平行边；更改仅保留在当前运行期间。示例绘制 cluster 边框和标签，对非 point 节点显示节点标签，不显示 point 文字。
 
-`make_graph(input_file)` 读取并校验 SMC 文件，将每个 state map 转换为同名 cluster，将其全部状态（包括解析器补充的 `Default`）转换为节点。各 map 的同名状态使用不同 ID，只有 `%start` 指定的状态使用椭圆，其余默认使用矩形。每个 transition guard 对应一条边；标签包含事件名、参数、条件、动作以及 push/pop/jump 信息。普通目标、jump 和 push 支持当前 map 中的名称及 `map::state` 名称；push 边指向压入的状态，标签保留返回状态。`nil` 表示自环；pop 的真实目标由运行时状态栈决定，图中用标有 `dynamic destination` 的自环占位，不表示实际返回当前状态。文件读取、解析或校验失败时返回 `std::nullopt` 并输出诊断；示例程序此时显示内置示例图。运行示例时可通过第一个命令行参数指定文件，不指定时读取当前目录的 `SmcParser.sm`。
+`make_graph(input_file)` 读取并校验 SMC 文件，将每个 state map 转换为同名 cluster，将其全部状态（包括解析器补充的 `Default`）转换为节点。各 map 的同名状态使用不同 ID，只有 `%start` 指定的状态使用椭圆，其余默认使用矩形。每个 transition guard 对应一条边；标签包含事件名、参数、条件、动作以及 push/pop/jump 信息。普通目标、jump 和 push 支持当前 map 中的名称及 `map::state` 名称；push 边指向压入的状态，标签保留返回状态。`nil` 表示自环；pop 的真实目标由运行时状态栈决定，图中用标有 `dynamic destination` 的自环占位，不表示实际返回当前状态。文件读取、解析或校验失败时返回 `std::nullopt` 并输出诊断。运行示例时可通过第一个命令行参数指定文件；不指定时读取当前目录的 `mapmanager.sm`。
+
+示例 UI 包含独立的 SMC 编辑器、图形画布和状态/诊断窗口。编辑器使用 SMC 语法高亮；每次文本修改都会尝试解析和校验，只有成功时才替换当前有向图并更新 DOT 布局。输入无效时，状态窗口会显示诊断并保留最后一次成功的图；启动文件读取或分析失败时，暂时显示内置示例图，仍可在编辑器中输入有效内容。
 
 ### 子图、compound 和 ratio
 

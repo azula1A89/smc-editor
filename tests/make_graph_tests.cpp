@@ -10,8 +10,22 @@ void require(bool condition, const char* message) {
 }
 
 void testConversion() {
-    const auto graph = make_graph(std::string(TEST_SOURCE_DIR) + "/tests/fsm_graph.sm");
+    const auto input_file = std::string(TEST_SOURCE_DIR) + "/tests/fsm_graph.sm";
+    const auto graph = make_graph(input_file);
     require(graph.has_value(), "Valid FSM failed to convert");
+    std::ifstream input(input_file, std::ios::binary);
+    const std::string contents((std::istreambuf_iterator<char>(input)),
+                               std::istreambuf_iterator<char>());
+    const auto graph_from_editor = make_graph_from_contents(contents, input_file);
+    require(graph_from_editor.has_value() &&
+                graph_from_editor->nodes.size() == graph->nodes.size() &&
+                graph_from_editor->edges.size() == graph->edges.size(),
+            "Editor contents did not produce the same graph as file input");
+
+    DiagnosticLog diagnostics;
+    require(!make_graph_from_contents("%unknown\n", "editor.sm", &diagnostics) &&
+                !diagnostics.empty(),
+            "Editor parse diagnostics were not reported");
     require(graph->clusters.size() == 2 && graph->nodes.size() == 6 &&
                 graph->edges.size() == 9, "Unexpected graph size");
     require(graph->clusters[0].label == "Main" && graph->clusters[1].label == "Other",

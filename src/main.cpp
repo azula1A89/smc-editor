@@ -4,6 +4,9 @@
 #include <optional>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <string>
+#include <vector>
 
 #include <imgui_freetype.h>
 #include <imgui.h>
@@ -19,9 +22,11 @@
 #include <notosans.h>
 
 #include <dot_layout.hpp>
+#include <smc_text_editor_language.hpp>
 #include <smc/generator.hpp>
 #include <smc/parser.hpp>
 #include <smc/syntax_checker.hpp>
+#include <TextEditor.h>
 
 class NonCopyable {
 protected:
@@ -62,9 +67,19 @@ private:
     bool m_Active = false;
 };
 
-std::optional<dot_layout::DirectedGraph> make_graph(const std::string& input_file = "SmcParser.sm");
+using DiagnosticLog = std::vector<std::string>;
+
+std::optional<dot_layout::DirectedGraph> make_graph(
+    const std::string& input_file = "mapmanager.sm", DiagnosticLog* log = nullptr);
+std::optional<dot_layout::DirectedGraph> make_graph_from_contents(
+    const std::string& contents, const std::string& source_name, DiagnosticLog* log = nullptr);
+std::optional<std::string> read_input_file(
+    const std::string& input_file, DiagnosticLog* log = nullptr);
+void append_log(DiagnosticLog* log, std::string message);
 void draw_dockspace();
-void render_graph(std::optional<dot_layout::DirectedGraph> graph = std::nullopt);
+void render_graph(std::optional<dot_layout::DirectedGraph> graph = std::nullopt,
+                  DiagnosticLog* log = nullptr);
+void render_diagnostics_window(DiagnosticLog& log);
 
 int main(int argc, char **argv) {
   const char *glsl_version = "#version 330";
@@ -74,7 +89,7 @@ int main(int argc, char **argv) {
 
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-  GLFWwindow *main_window = glfwCreateWindow(900, 300, "smc", NULL, NULL);
+  GLFWwindow *main_window = glfwCreateWindow(1280, 800, "smc", NULL, NULL);
   if (main_window == NULL) {
     glfwTerminate();
     return GL_FALSE;
@@ -119,8 +134,23 @@ int main(int argc, char **argv) {
                                            notosansSize, 15.0f,
                                            &notoSansConfig);
 
+  TextEditor editor;
+  editor.SetLanguage(smc_editor::language());
+  DiagnosticLog log;
+  const std::string input_file = argc > 1 ? argv[1] : "mapmanager.sm";
+  const auto contents = read_input_file(input_file, &log);
+  if (contents)
+    editor.SetText(*contents);
+  auto graph_update = contents
+      ? make_graph_from_contents(editor.GetText(), input_file, &log)
+      : std::nullopt;
+  if (graph_update)
+    append_log(&log, "SMC analysis succeeded; graph is ready.");
+  else if (contents)
+    append_log(&log, "Initial SMC analysis failed; displaying the built-in example graph.");
+  else
+    append_log(&log, "Displaying the built-in example graph until valid SMC is available.");
 
-  auto graph = make_graph(argc > 1 ? argv[1] : "mapmanager.sm");
   // Main loop
   while (glfwWindowShouldClose(main_window) == GL_FALSE) {
     // Poll for and process events
@@ -131,8 +161,25 @@ int main(int argc, char **argv) {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
     draw_dockspace();
-    render_graph(std::move(graph));
-    graph.reset();
+    render_graph(std::move(graph_update), &log);
+    graph_update.reset();
+
+    bool editor_changed = false;
+    if (ImGui::Begin("SMC Editor")) {
+      editor_changed = editor.Render("Source", ImVec2(0.0f, 0.0f));
+    }
+    ImGui::End();
+
+    if (editor_changed) {
+      auto updated_graph = make_graph_from_contents(editor.GetText(), input_file, &log);
+      if (updated_graph) {
+        graph_update = std::move(updated_graph);
+        append_log(&log, "SMC analysis succeeded; graph and DOT layout will be updated.");
+      } else {
+        append_log(&log, "SMC analysis failed; retaining the last valid graph.");
+      }
+    }
+    render_diagnostics_window(log);
 
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -218,55 +265,61 @@ void draw_spline_with_arrow(ImDrawList *draw_list, const std::vector<ImVec2> &sp
     }
 }
 
-void drag_positive_value(const char* label, float& value, float speed) {
+void drag_positive_value(const char* label, float& value, float speed, DiagnosticLog* log) {
     float edited = value;
     if (ImGui::DragFloat(label, &edited, speed, 0.01f, 100.0f,
                          "%.2f", ImGuiSliderFlags_AlwaysClamp)) {
         if (std::isfinite(edited) && edited > 0.0f) {
             value = edited;
         } else {
-            std::cerr << label << " must be positive and finite\n";
+            append_log(log, std::string(label) + " must be positive and finite");
         }
     }
 }
 
-void print_diagnostics(const smc::Diagnostics& diagnostics) {
+void append_log(DiagnosticLog* log, std::string message) {
+    std::cerr << message << '\n';
+    if (log)
+        log->push_back(std::move(message));
+}
+
+void print_diagnostics(const smc::Diagnostics& diagnostics, DiagnosticLog* log) {
     for (const auto& diagnostic : diagnostics) {
         const char* severity = diagnostic.severity == smc::DiagnosticSeverity::error
                                    ? "error"
                                    : "warning";
-        std::cerr << diagnostic.location.file << ':' << diagnostic.location.line << ':'
-                  << diagnostic.location.column << ": " << severity << ": "
-                  << diagnostic.message << '\n';
+        append_log(log, diagnostic.location.file + ':' +
+            std::to_string(diagnostic.location.line) + ':' +
+            std::to_string(diagnostic.location.column) + ": " + severity + ": " +
+            diagnostic.message);
     }
 }
 
-std::optional<dot_layout::DirectedGraph> make_graph(const std::string& input_file) {
+std::optional<std::string> read_input_file(const std::string& input_file, DiagnosticLog* log) {
     std::ifstream input(input_file, std::ios::binary);
     if (!input) {
-        std::cerr << "smc_cpp: cannot open input file '" << input_file << "'\n";
+        append_log(log, "smc_cpp: cannot open input file '" + input_file + "'");
         return std::nullopt;
     }
     const std::string contents((std::istreambuf_iterator<char>(input)),
                                std::istreambuf_iterator<char>());
     if (input.bad()) {
-        std::cerr << "smc_cpp: failed while reading input file '" << input_file << "'\n";
+        append_log(log, "smc_cpp: failed while reading input file '" + input_file + "'");
         return std::nullopt;
     }
+    return contents;
+}
 
+std::optional<dot_layout::DirectedGraph> make_graph_from_contents(
+    const std::string& contents, const std::string& source_name, DiagnosticLog* log) {
     smc::Diagnostics diagnostics;
-    smc::Parser parser(contents, input_file, diagnostics);
+    smc::Parser parser(contents, source_name, diagnostics);
     const auto fsm = parser.parse();
-    if (!fsm) {
-        print_diagnostics(diagnostics);
-        return std::nullopt;
-    }
-
     smc::SyntaxChecker checker(diagnostics);
-    if (!checker.check(*fsm, "c++")) {
-        print_diagnostics(diagnostics);
+    const bool syntax_valid = fsm && checker.check(*fsm, "c++");
+    print_diagnostics(diagnostics, log);
+    if (!syntax_valid)
         return std::nullopt;
-    }
 
     dot_layout::DirectedGraph graph;
     std::vector<std::vector<std::string>> state_ids;
@@ -282,8 +335,8 @@ std::optional<dot_layout::DirectedGraph> make_graph(const std::string& input_fil
             ids.push_back(id);
         }
         if (cluster.nodes.empty()) {
-            std::cerr << input_file << ": state map '" << map.name
-                      << "' has no states; cannot lay out an empty cluster\n";
+            append_log(log, source_name + ": state map '" + map.name +
+                "' has no states; cannot lay out an empty cluster");
             return std::nullopt;
         }
         graph.clusters.push_back(std::move(cluster));
@@ -320,8 +373,9 @@ std::optional<dot_layout::DirectedGraph> make_graph(const std::string& input_fil
                         if (destination != "nil") {
                             const auto resolved = resolve_state(destination, map.name);
                             if (!resolved) {
-                                std::cerr << input_file << ": cannot resolve destination '"
-                                          << destination << "' in map '" << map.name << "'\n";
+                                append_log(log, source_name +
+                                    ": cannot resolve destination '" + destination +
+                                    "' in map '" + map.name + "'");
                                 return std::nullopt;
                             }
                             target = *resolved;
@@ -347,7 +401,39 @@ std::optional<dot_layout::DirectedGraph> make_graph(const std::string& input_fil
     return graph;
 }
 
-void render_graph(std::optional<dot_layout::DirectedGraph> graph_in) {
+std::optional<dot_layout::DirectedGraph> make_graph(
+    const std::string& input_file, DiagnosticLog* log) {
+    const auto contents = read_input_file(input_file, log);
+    if (!contents)
+        return std::nullopt;
+    return make_graph_from_contents(*contents, input_file, log);
+}
+
+void render_diagnostics_window(DiagnosticLog& log) {
+    if (!ImGui::Begin("Status / Diagnostics")) {
+        ImGui::End();
+        return;
+    }
+
+    if (ImGui::Button("Clear"))
+        log.clear();
+
+    ImGui::Separator();
+    if (ImGui::BeginChild("DiagnosticLog", ImVec2(0.0f, 0.0f),
+                          ImGuiChildFlags_Borders,
+                          ImGuiWindowFlags_HorizontalScrollbar)) {
+        const bool was_at_bottom =
+            ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f;
+        for (const auto& message : log)
+            ImGui::TextUnformatted(message.c_str());
+        if (was_at_bottom)
+            ImGui::SetScrollHereY(1.0f);
+    }
+    ImGui::EndChild();
+    ImGui::End();
+}
+
+void render_graph(std::optional<dot_layout::DirectedGraph> graph_in, DiagnosticLog* log) {
     static dot_layout::DirectedGraph graph{
       {{"a", "A"}, {"b", "B"}, {"c", "C"}},
       {{"a", "b", "a->b", 1, "inner", "right"}, {"b", "c", "b->c"}},
@@ -355,7 +441,7 @@ void render_graph(std::optional<dot_layout::DirectedGraph> graph_in) {
        {"right", "Right", {"b"}, std::nullopt},
        {"outer", "Outer", {"c"}, std::nullopt}}};
     if (graph_in)
-        graph = *graph_in;
+        graph = std::move(*graph_in);
     
     ImGui::Begin("canvas", NULL, ImGuiWindowFlags_MenuBar);
     ImDrawList *draw_list = ImGui::GetWindowDrawList();
@@ -415,12 +501,12 @@ void render_graph(std::optional<dot_layout::DirectedGraph> graph_in) {
                 if (ImGui::RadioButton("Numeric", ratio_selection == RatioSelection::Numeric))
                     ratio_selection = RatioSelection::Numeric;
                 if (ratio_selection == RatioSelection::Numeric)
-                    drag_positive_value("Height / width", ratio_value, 0.01f);
+                    drag_positive_value("Height / width", ratio_value, 0.01f, log);
                 if (ratio_selection == RatioSelection::Fill ||
                     ratio_selection == RatioSelection::Compress ||
                     ratio_selection == RatioSelection::Expand) {
-                    drag_positive_value("Width (in)", size_width, 0.05f);
-                    drag_positive_value("Height (in)", size_height, 0.05f);
+                    drag_positive_value("Width (in)", size_width, 0.05f, log);
+                    drag_positive_value("Height (in)", size_height, 0.05f, log);
                 }
                 ImGui::EndMenu();
             }
