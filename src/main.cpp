@@ -17,6 +17,45 @@
 
 #include <dot_layout.hpp>
 
+class NonCopyable {
+protected:
+    NonCopyable() = default;
+    ~NonCopyable() = default;
+    NonCopyable(const NonCopyable&) = delete;
+    NonCopyable& operator=(const NonCopyable&) = delete;
+    NonCopyable(NonCopyable&&) = default;
+    NonCopyable& operator=(NonCopyable&&) = default;
+};
+
+/// Push/PopFont
+class Font : private NonCopyable {
+public:
+    explicit Font(ImFont* font) : m_Active(font != nullptr) {
+        if (m_Active) ImGui::PushFont(font, 0.0f);
+    }
+
+    ~Font() {
+        if (m_Active) ImGui::PopFont();
+    }
+
+private:
+    bool m_Active = false;
+};
+
+class FontSize : private NonCopyable {
+public:
+    explicit FontSize(float size) : m_Active(size > 0) {
+        if (m_Active) ImGui::PushFont(NULL, size);
+    }
+
+    ~FontSize() {
+        if (m_Active) ImGui::PopFont();
+    }
+
+private:
+    bool m_Active = false;
+};
+
 void draw_dockspace();
 void render_graph();
 
@@ -175,12 +214,12 @@ void render_graph() {
        {"validate", "render", "valid"},
        {"validate", "validate", "not valid"},
        {"parse", "render", "invalid"}}};
-
+    
     ImGui::Begin("canvas", NULL, ImGuiWindowFlags_MenuBar);
     static ImDrawList *draw_list = ImGui::GetWindowDrawList();
     draw_list->ChannelsSplit(2);
     ImGuiStyle &style = ImGui::GetStyle();
-    const auto& origin = ImGui::GetCursorScreenPos();
+    static auto origin = ImGui::GetCursorScreenPos();
     static float& scale = style.FontScaleMain;
     static dot_layout::LayoutOptions options;
     static float rank_separation = 4.0f;
@@ -189,6 +228,12 @@ void render_graph() {
     const ImColor text_col = ImGui::GetStyle().Colors[ImGuiCol_Text];
     const ImColor line_col = ImGui::GetStyle().Colors[ImGuiCol_PlotLines];
     ImColor node_col = ImGui::GetStyle().Colors[ImGuiCol_FrameBg];node_col.Value.w = 1.0f;
+
+    if ( ImGui::IsMouseDragging(0) ) {
+        const ImVec2 drag_delta = ImGui::GetIO().MouseDelta;
+        origin.x += drag_delta.x;
+        origin.y += drag_delta.y;
+    }
 
     if (ImGui::BeginMenuBar()) {
         if(ImGui::BeginMenu("settings")) {
@@ -265,44 +310,48 @@ void render_graph() {
         return result;
     };
 
-    // Draw nodes
-    draw_list->ChannelsSetCurrent(1);
-    for (const auto& node : layout.nodes) {
-        const float x = origin.x + (node.center.x - layout.bounds.min_x) * scale;
-        const float y = origin.y + (layout.bounds.max_y - node.center.y) * scale;
-        const float width = node.width * scale;
-        const float height = node.height * scale;
-        const ImVec2 label_size = ImGui::CalcTextSize(node.id.c_str());
-        const ImVec2 label_pos(x - label_size.x * 0.5f, y - label_size.y * 0.5f);
-        const ImVec2 tl(x - width * 0.5f, y - height * 0.5f);
-        const ImVec2 br(x + width * 0.5f, y + height * 0.5f);
-        
-        if (node.shape == dot_layout::NodeShape::Box) {
-            draw_list->AddRectFilled(tl, br, node_col);
-        } else {
-            draw_list->AddEllipseFilled(ImVec2(x, y), ImVec2(width * 0.5f, height * 0.5f), node_col);
-        }
-        if (node.shape != dot_layout::NodeShape::Point)
-            draw_list->AddText(label_pos, text_col, node.id.c_str());
-    }
-    
-    // Draw edges
-    draw_list->ChannelsSetCurrent(0);
-    for (const auto& edge : layout.edges) {
-        for (const auto& spline : edge.spline_points) {
-            auto spl = spline_to_screen(spline);
-            draw_spline_with_arrow(draw_list, spl, line_col, 1.0f, arrow_size);
-        }
-        if (edge.label) {
-            const ImVec2 center = to_screen(edge.label->center);
-            const ImVec2 half_size(edge.label->width * scale * 0.5f,
-                                edge.label->height * scale * 0.5f);
-            draw_list->AddText(
-                ImVec2(center.x - half_size.x, center.y - half_size.y), text_col, edge.label->text.c_str());
-        }
-    }
+    {
+        FontSize font_size(14.0f);
 
-    draw_list->ChannelsMerge();
+        // Draw nodes
+        draw_list->ChannelsSetCurrent(1);
+        for (const auto& node : layout.nodes) {
+            const float x = origin.x + (node.center.x - layout.bounds.min_x) * scale;
+            const float y = origin.y + (layout.bounds.max_y - node.center.y) * scale;
+            const float width = node.width * scale;
+            const float height = node.height * scale;
+            const ImVec2 label_size = ImGui::CalcTextSize(node.id.c_str());
+            const ImVec2 label_pos(x - label_size.x * 0.5f, y - label_size.y * 0.5f);
+            const ImVec2 tl(x - width * 0.5f, y - height * 0.5f);
+            const ImVec2 br(x + width * 0.5f, y + height * 0.5f);
+            
+            if (node.shape == dot_layout::NodeShape::Box) {
+                draw_list->AddRectFilled(tl, br, node_col);
+            } else {
+                draw_list->AddEllipseFilled(ImVec2(x, y), ImVec2(width * 0.5f, height * 0.5f), node_col);
+            }
+            if (node.shape != dot_layout::NodeShape::Point)
+                draw_list->AddText(label_pos, text_col, node.id.c_str());
+        }
+        
+        // Draw edges
+        draw_list->ChannelsSetCurrent(0);
+        for (const auto& edge : layout.edges) {
+            for (const auto& spline : edge.spline_points) {
+                auto spl = spline_to_screen(spline);
+                draw_spline_with_arrow(draw_list, spl, line_col, 1.0f, arrow_size);
+            }
+            if (edge.label) {
+                const ImVec2 center = to_screen(edge.label->center);
+                const ImVec2 half_size(edge.label->width * scale * 0.5f,
+                                    edge.label->height * scale * 0.5f);
+                draw_list->AddText(
+                    ImVec2(center.x - half_size.x, center.y - half_size.y), text_col, edge.label->text.c_str());
+            }
+        }
+
+        draw_list->ChannelsMerge();
+    }
 
     ImGui::End();
 }
