@@ -64,6 +64,20 @@ const char* rankDirectionName(RankDirection direction) {
   throw std::invalid_argument("Unknown rank direction");
 }
 
+const char* nodeShapeName(NodeShape shape) {
+  switch (shape) {
+  case NodeShape::Box:
+    return "box";
+  case NodeShape::Circle:
+    return "circle";
+  case NodeShape::Ellipse:
+    return "ellipse";
+  case NodeShape::Point:
+    return "point";
+  }
+  throw std::invalid_argument("Unknown node shape");
+}
+
 void setAttribute(void* object, const char* name, const std::string& value) {
   std::string attribute_name(name);
   if (agsafeset(object, attribute_name.data(), value.c_str(), "") != 0) {
@@ -131,11 +145,15 @@ LayoutResult DotLayout::layout(const DirectedGraph& input,
     if (id.empty() || !node_indices.emplace(id, i).second) {
       throw std::invalid_argument("Node IDs must be non-empty and unique");
     }
+    nodeShapeName(input.nodes[i].shape);
   }
   for (const auto& edge : input.edges) {
     if (node_indices.find(edge.from) == node_indices.end() ||
         node_indices.find(edge.to) == node_indices.end()) {
       throw std::invalid_argument("Every edge endpoint must name an existing node");
+    }
+    if (edge.weight < 1 || edge.weight > 1000) {
+      throw std::invalid_argument("Edge weight must be between 1 and 1000");
     }
   }
 
@@ -170,6 +188,7 @@ LayoutResult DotLayout::layout(const DirectedGraph& input,
       throw std::runtime_error("Could not add a Graphviz node");
     }
     setAttribute(node, "label", input.nodes[i].label);
+    setAttribute(node, "shape", nodeShapeName(input.nodes[i].shape));
     graph_nodes.push_back(node);
   }
 
@@ -185,6 +204,7 @@ LayoutResult DotLayout::layout(const DirectedGraph& input,
     if (!edge.label.empty()) {
       setAttribute(graph_edge, "label", edge.label);
     }
+    setAttribute(graph_edge, "weight", std::to_string(edge.weight));
     graph_edges.push_back(graph_edge);
   }
 
@@ -207,7 +227,8 @@ LayoutResult DotLayout::layout(const DirectedGraph& input,
         parseDimension(agget(graph_nodes[i], width_attribute), "width");
     const double height =
         parseDimension(agget(graph_nodes[i], height_attribute), "height");
-    result.nodes.push_back({input.nodes[i].id, center, width, height});
+    result.nodes.push_back(
+        {input.nodes[i].id, center, width, height, input.nodes[i].shape});
 
     const double min_x = center.x - width / 2.0;
     const double min_y = center.y - height / 2.0;

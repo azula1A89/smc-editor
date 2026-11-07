@@ -23,4 +23,7 @@ target_link_libraries(dot_layout_demo PRIVATE dot_layout imgui glew_s)
 
 if(BUILD_TESTING)
   add_test(NAME dot_layout_demo_runs COMMAND dot_layout_demo)
+  add_executable(dot_layout_tests tests/dot_layout_tests.cpp)
+  target_link_libraries(dot_layout_tests PRIVATE dot_layout)
+  add_test(NAME dot_layout_tests COMMAND dot_layout_tests)
 endif()

@@ -24,11 +24,12 @@ sudo apt install build-essential cmake pkg-config python3 gawk flex bison \
 ```sh
 cmake -S . -B build
 cmake --build build --parallel
-ctest --test-dir build --output-on-failure
+ctest --test-dir build -R '^dot_layout_tests$' --output-on-failure
 ./build/dot_layout_demo
 ```
 
 Graphviz 源码包会自动获取到构建目录中的 `_deps/graphviz-src/`；配置文件、对象文件和静态归档放在 `build/deps/graphviz/graphviz-build/`。
+`dot_layout_tests` 不需要图形界面；另有 `dot_layout_demo_runs` 测试会启动交互窗口，需手动关闭。
 
 ## 包装层
 
@@ -37,7 +38,18 @@ Graphviz 源码包会自动获取到构建目录中的 `_deps/graphviz-src/`；�
 - [src/static_plugins.cpp](src/static_plugins.cpp) 显式注册静态链接的 `dot_layout` 与 Pango 插件，再通过 `gvContextPlugins(..., 0)` 创建不依赖运行时插件搜索的 Graphviz 上下文。
 - [deps/graphviz/CMakeLists.txt](deps/graphviz/CMakeLists.txt) 获取上游源码，驱动静态构建，并链接 Graphviz 归档及其系统依赖。
 
-节点和边的坐标/尺寸均以 Graphviz point 为单位（72 point = 1 inch）；节点的 Graphviz `pos` 属性以 point 返回，`width`/`height` 属性以 inch 返回，包装类统一换算为 point。边 spline 控制点、边标签中心及标签尺寸直接从布局后的 Graphviz 结构读取；其中标签尺寸由 Graphviz 布局估算。边几何使用 Graphviz 16.1.0 的 `common/types.h` 布局结构，升级 Graphviz 时应重新核对这些字段。`bounds` 仍是节点矩形的包围框，不包含边曲线或边标签的延伸范围。
+每个节点可以分别设置 `NodeShape::Box`、`Circle`、`Ellipse` 或 `Point`，默认是 `Box`。`NodeLayout::shape` 返回选定形状，供绘制层使用；`Point` 按 Graphviz 的行为不显示节点文字。每条边可以分别设置整数 `weight`（1–1000，默认 1）；较高权重使 `dot` 更倾向于缩短、拉直边，并使其沿层级方向对齐，但具体几何取决于整张图，不能保证每条边都严格变化。权重不会作为标签显示，已有边标签仍正常显示。非法形状或权重会抛出 `std::invalid_argument`。旧的两字段节点和三字段边聚合初始化仍可使用：
+
+```cpp
+dot_layout::DirectedGraph graph{
+    {{"a", "A"}, {"b", "B", dot_layout::NodeShape::Circle}},
+    {{"a", "b", "label", 5}}};
+auto layout = dot_layout::DotLayout{}.layout(graph);
+```
+
+示例的 `settings` 菜单提供逐节点形状和逐边权重控制，边控件编号用于区分平行边；更改仅保留在当前运行期间。示例对非 point 节点显示节点 ID，不显示 point 文字。
+
+节点和边的坐标/尺寸均以 Graphviz point 为单位（72 point = 1 inch）；节点的 Graphviz `pos` 属性以 point 返回，`width`/`height` 属性以 inch 返回，包装类统一换算为 point。边 spline 控制点、边标签中心及标签尺寸直接从布局后的 Graphviz 结构读取；其中标签尺寸由 Graphviz 布局估算。边几何使用 Graphviz 16.1.0 的 `common/types.h` 布局结构，升级 Graphviz 时应重新核对这些字段。`bounds` 包含节点包围矩形、边 spline 包围框和边标签范围。
 
 ImGui 绘制时，可按自己的缩放比例将 Graphviz 坐标从图形坐标变换到屏幕坐标。例如以 `bounds` 左上角作为屏幕原点时：
 
@@ -46,10 +58,17 @@ const float x = origin.x + (node.center.x - layout.bounds.min_x) * scale;
 const float y = origin.y + (layout.bounds.max_y - node.center.y) * scale;
 const float width = node.width * scale;
 const float height = node.height * scale;
-drawList->AddRect(
-    ImVec2(x - width * 0.5f, y - height * 0.5f),
-    ImVec2(x + width * 0.5f, y + height * 0.5f),
-    IM_COL32(220, 220, 220, 255));
+if (node.shape == dot_layout::NodeShape::Box) {
+  drawList->AddRectFilled(
+      ImVec2(x - width * 0.5f, y - height * 0.5f),
+      ImVec2(x + width * 0.5f, y + height * 0.5f),
+      IM_COL32(220, 220, 220, 255));
+} else {
+  drawList->AddEllipseFilled(
+      ImVec2(x, y), ImVec2(width * 0.5f, height * 0.5f),
+      IM_COL32(220, 220, 220, 255));
+}
+// 仅为非 Point 节点绘制文字。
 
 auto toScreen = [&](dot_layout::Point point) {
   return ImVec2(
@@ -77,4 +96,4 @@ for (const auto& edge : layout.edges) {
 }
 ```
 
-Graphviz 的图结构和布局 API 是 C 接口；包装类负责管理上下文/图的生命周期，并将 Graphviz 位置结果转换为应用自己的 C++ 类型。示例不直接依赖 ImGui。
+Graphviz 的图结构和布局 API 是 C 接口；包装类负责管理上下文/图的生命周期，并将 Graphviz 位置结果转换为应用自己的 C++ 类型。包装库不直接依赖 ImGui。

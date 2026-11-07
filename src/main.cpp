@@ -165,7 +165,7 @@ void draw_spline_with_arrow(ImDrawList *draw_list, std::vector<ImVec2> &spl, ImC
 }
 
 void render_graph() {
-    const dot_layout::DirectedGraph graph{
+    static dot_layout::DirectedGraph graph{
       {{"source", "Source"}, {"parse", "Parse"}, {"validate", "Validate"},
        {"render", "Render"}},
       {{"source", "parse", "read file"},
@@ -205,6 +205,41 @@ void render_graph() {
             ImGui::DragFloat("Rank Separation", &rank_separation, 0.01f, 0.01f, 100.0f);
             ImGui::DragFloat("Node Separation", &node_separation, 0.01f, 0.01f, 100.0f);
             ImGui::DragFloat("Arrow Size", &arrow_size, 0.01f, 0.0f, 100.0f);
+            if (ImGui::BeginMenu("Node shapes")) {
+                constexpr dot_layout::NodeShape shapes[] = {
+                    dot_layout::NodeShape::Box, dot_layout::NodeShape::Circle,
+                    dot_layout::NodeShape::Ellipse, dot_layout::NodeShape::Point};
+                constexpr const char* shape_names[] = {"box", "circle", "ellipse", "point"};
+                for (std::size_t i = 0; i < graph.nodes.size(); ++i) {
+                    auto& node = graph.nodes[i];
+                    ImGui::PushID(static_cast<int>(i));
+                    if (ImGui::BeginCombo(node.id.c_str(), shape_names[static_cast<int>(node.shape)])) {
+                        for (std::size_t j = 0; j < 4; ++j) {
+                            const bool selected = node.shape == shapes[j];
+                            if (ImGui::Selectable(shape_names[j], selected))
+                                node.shape = shapes[j];
+                            if (selected)
+                                ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Edge weights")) {
+                for (std::size_t i = 0; i < graph.edges.size(); ++i) {
+                    auto& edge = graph.edges[i];
+                    ImGui::PushID(static_cast<int>(i));
+                    const std::string name = edge.from + " -> " + edge.to +
+                        " (" + std::to_string(i + 1) + ")";
+                    ImGui::SetNextItemWidth(100.0f);
+                    ImGui::DragInt(name.c_str(), &edge.weight, 1.0f, 1, 1000,
+                                   "%d", ImGuiSliderFlags_AlwaysClamp);
+                    ImGui::PopID();
+                }
+                ImGui::EndMenu();
+            }
             ImGui::EndMenu();
         }
         ImGui::EndMenuBar();
@@ -242,8 +277,13 @@ void render_graph() {
         const ImVec2 tl(x - width * 0.5f, y - height * 0.5f);
         const ImVec2 br(x + width * 0.5f, y + height * 0.5f);
         
-        draw_list->AddRectFilled(tl, br, node_col);
-        draw_list->AddText(label_pos, text_col, node.id.c_str());
+        if (node.shape == dot_layout::NodeShape::Box) {
+            draw_list->AddRectFilled(tl, br, node_col);
+        } else {
+            draw_list->AddEllipseFilled(ImVec2(x, y), ImVec2(width * 0.5f, height * 0.5f), node_col);
+        }
+        if (node.shape != dot_layout::NodeShape::Point)
+            draw_list->AddText(label_pos, text_col, node.id.c_str());
     }
     
     // Draw edges

@@ -6,15 +6,24 @@
 
 namespace dot_layout {
 
+enum class NodeShape {
+  Box,
+  Circle,
+  Ellipse,
+  Point,
+};
+
 struct Node {
   std::string id;
   std::string label;
+  NodeShape shape = NodeShape::Box;
 };
 
 struct Edge {
   std::string from;
   std::string to;
   std::string label;
+  int weight = 1;
 };
 
 struct DirectedGraph {
@@ -45,6 +54,7 @@ struct NodeLayout {
   Point center;
   double width = 0.0;
   double height = 0.0;
+  NodeShape shape = NodeShape::Box;
 };
 
 struct EdgeLabelLayout {
