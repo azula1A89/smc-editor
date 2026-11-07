@@ -1,0 +1,198 @@
+#include "smc/lexer.hpp"
+#include "smc/parser.hpp"
+#include "smc/syntax_checker.hpp"
+#include "smc/generator.hpp"
+
+#include <cassert>
+#include <filesystem>
+#include <string>
+
+namespace {
+
+const char* valid_source = R"SMC(%{ raw source { and nested } %}
+%start Main::Idle
+%class Context
+%fsmclass ContextFSM
+%header context.h
+%include <vector>
+%map Main
+%%
+Idle
+Entry { initialize(); }
+{
+    start(value: int) [value > 0] Active { set(value); }
+                            [value <= 0] nil { }
+}
+Active
+{
+    stop nil { }
+    reset Main::Idle { }
+}
+%%
+)SMC";
+
+void test_lexer_preserves_source_and_comments() {
+    smc::Diagnostics diagnostics;
+    smc::Lexer lexer("%{ raw { body } %} /* outer /* nested */ comment */ %%", "lexer.sm",
+                     diagnostics);
+    const auto source = lexer.next();
+    const auto delimiter = lexer.next();
+    const auto end = lexer.next();
+
+    assert(source.kind == smc::TokenKind::source_block);
+    assert(source.text == " raw { body } ");
+    assert(delimiter.kind == smc::TokenKind::double_percent);
+    assert(end.kind == smc::TokenKind::end);
+    assert(diagnostics.empty());
+}
+
+void test_parser_and_semantic_checker() {
+    smc::Diagnostics diagnostics;
+    smc::Parser parser(valid_source, "valid.sm", diagnostics);
+    const auto fsm = parser.parse();
+
+    assert(fsm.has_value());
+    assert(fsm->maps.size() == 1);
+    assert(fsm->maps.front().states.size() == 3);
+    assert(fsm->maps.front().states.front().transitions.front().guards.size() == 2);
+    assert(fsm->maps.front().states.front().entry_actions.has_value());
+
+    smc::SyntaxChecker checker(diagnostics);
+    assert(checker.check(*fsm));
+    assert(diagnostics.empty());
+}
+
+void test_checker_reports_missing_destination() {
+    const std::string source = R"SMC(%start Main::Ready
+%class Context
+%header context.h
+%map Main
+%%
+Ready { open Missing {} }
+%%
+)SMC";
+    smc::Diagnostics diagnostics;
+    smc::Parser parser(source, "invalid.sm", diagnostics);
+    const auto fsm = parser.parse();
+    assert(fsm.has_value());
+
+    smc::SyntaxChecker checker(diagnostics);
+    assert(!checker.check(*fsm));
+    assert(!diagnostics.empty());
+}
+
+void test_default_state_entry_is_rejected() {
+    const std::string source = R"SMC(%start Main::Ready
+%class Context
+%header context.h
+%map Main
+%%
+Ready { begin nil {} }
+Default Entry {} { }
+%%
+)SMC";
+    smc::Diagnostics diagnostics;
+    smc::Parser parser(source, "default.sm", diagnostics);
+    const auto fsm = parser.parse();
+    assert(fsm.has_value());
+
+    smc::SyntaxChecker checker(diagnostics);
+    assert(!checker.check(*fsm));
+}
+
+void test_duplicate_unconditional_transition_is_rejected() {
+    const std::string source = R"SMC(%start Main::Ready
+%class Context
+%header context.h
+%map Main
+%%
+Ready
+{
+    open Running { }
+    open nil { }
+}
+Running { }
+%%
+)SMC";
+    smc::Diagnostics diagnostics;
+    smc::Parser parser(source, "duplicate.sm", diagnostics);
+    const auto fsm = parser.parse();
+    assert(fsm.has_value());
+
+    smc::SyntaxChecker checker(diagnostics);
+    assert(!checker.check(*fsm));
+}
+
+void test_generation_placeholder_reports_unsupported() {
+    smc::Fsm fsm;
+    fsm.location = smc::SourceLocation{"generation.sm", 1, 1};
+    smc::CppGeneratorInterface generator;
+    const auto diagnostics = generator.generate(fsm, std::filesystem::current_path());
+    assert(diagnostics.size() == 1);
+    assert(diagnostics.front().message.find("not implemented") != std::string::npos);
+}
+
+void test_parser_rejects_malformed_typed_parameter_and_action() {
+    const std::string malformed_parameter = R"SMC(%start Main::Ready
+%class Context
+%header context.h
+%map Main
+%%
+Ready { open(value) nil {} }
+%%
+)SMC";
+    smc::Diagnostics parameter_diagnostics;
+    smc::Parser parameter_parser(malformed_parameter, "parameter.sm",
+                                 parameter_diagnostics);
+    assert(!parameter_parser.parse().has_value());
+    assert(!parameter_diagnostics.empty());
+
+    const std::string malformed_action = R"SMC(%start Main::Ready
+%class Context
+%header context.h
+%map Main
+%%
+Ready { open nil { call() } }
+%%
+)SMC";
+    smc::Diagnostics action_diagnostics;
+    smc::Parser action_parser(malformed_action, "action.sm", action_diagnostics);
+    assert(!action_parser.parse().has_value());
+    assert(!action_diagnostics.empty());
+}
+
+void test_cross_map_destination_and_nested_parameter_type() {
+    const std::string source = R"SMC(%start Root::Idle
+%class Context
+%header context.h
+%map Root
+%%
+Idle { switch(value: std::pair<int, std::string>) Target::Ready { set([] { return "}"; }); } }
+%%
+%map Target
+%%
+Ready { reset Root::Idle {} }
+%%
+)SMC";
+    smc::Diagnostics diagnostics;
+    smc::Parser parser(source, "cross-map.sm", diagnostics);
+    const auto fsm = parser.parse();
+    assert(fsm.has_value());
+
+    smc::SyntaxChecker checker(diagnostics);
+    assert(checker.check(*fsm));
+    assert(diagnostics.empty());
+}
+
+} // namespace
+
+int main() {
+    test_lexer_preserves_source_and_comments();
+    test_parser_and_semantic_checker();
+    test_checker_reports_missing_destination();
+    test_default_state_entry_is_rejected();
+    test_duplicate_unconditional_transition_is_rejected();
+    test_generation_placeholder_reports_unsupported();
+    test_parser_rejects_malformed_typed_parameter_and_action();
+    test_cross_map_destination_and_nested_parameter_type();
+}

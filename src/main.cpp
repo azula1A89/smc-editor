@@ -16,6 +16,9 @@
 #include <notosans.h>
 
 #include <dot_layout.hpp>
+#include <smc/generator.hpp>
+#include <smc/parser.hpp>
+#include <smc/syntax_checker.hpp>
 
 class NonCopyable {
 protected:
