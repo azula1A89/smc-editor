@@ -1,0 +1,268 @@
+#include <cmath>
+#include <algorithm>
+#include <stdexcept>
+
+#include <imgui_freetype.h>
+#include <imgui.h>
+#include <imgui_internal.h>
+
+#include <GL/glew.h>
+#include <GLFW/glfw3.h>
+
+#include <backends/imgui_impl_glfw.h>
+#include <backends/imgui_impl_opengl3.h>
+
+#include <dejavu.h>
+#include <notosans.h>
+
+#include <dot_layout.hpp>
+
+void draw_dockspace();
+void render_graph();
+
+int main(int argc, char **argv) {
+  const char *glsl_version = "#version 330";
+  if (glfwInit() == GL_FALSE) {
+    return GL_FALSE;
+  }
+
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+  GLFWwindow *main_window = glfwCreateWindow(900, 300, "smc", NULL, NULL);
+  if (main_window == NULL) {
+    glfwTerminate();
+    return GL_FALSE;
+  }
+
+  glfwMakeContextCurrent(main_window);
+  glfwSwapInterval(1);
+
+  // Setup Dear ImGui context
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+
+  ImGuiIO &io = ImGui::GetIO();
+  (void)io;
+  io.ConfigFlags |= ImGuiConfigFlags_DockingEnable; // Enable Docking
+
+  float xscale, yscale;
+  glfwGetWindowContentScale((GLFWwindow *)main_window, &xscale, &yscale);
+
+  ImGuiStyle &style = ImGui::GetStyle();
+  style.FontScaleDpi = std::max(xscale, yscale);
+
+  // Setup Platform/Renderer backends
+  ImGui_ImplGlfw_InitForOpenGL(main_window, true);
+  ImGui_ImplOpenGL3_Init(glsl_version);
+
+  io.Fonts->Clear();
+
+  ImFontConfig dejaVuConfig;
+  std::copy_n("DejaVu", 7, dejaVuConfig.Name);
+  dejaVuConfig.FontLoaderFlags = ImGuiFreeTypeLoaderFlags_LightHinting;
+  dejaVuConfig.FontDataOwnedByAtlas = false;
+  io.Fonts->AddFontFromMemoryCompressedTTF(static_cast<const void *>(&dejavu),
+                                           dejavuSize, 15.0f, &dejaVuConfig);
+
+  ImFontConfig notoSansConfig;
+  std::copy_n("NotoSansSC", 11, notoSansConfig.Name);
+  notoSansConfig.FontLoaderFlags = ImGuiFreeTypeLoaderFlags_LightHinting;
+  notoSansConfig.FontDataOwnedByAtlas = false;
+  notoSansConfig.MergeMode = true;
+  io.Fonts->AddFontFromMemoryCompressedTTF(static_cast<const void *>(&notosans),
+                                           notosansSize, 15.0f,
+                                           &notoSansConfig);
+
+  // Main loop
+  while (glfwWindowShouldClose(main_window) == GL_FALSE) {
+    // Poll for and process events
+    glfwPollEvents();
+
+    // Start the Dear ImGui frame
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+    draw_dockspace();
+    render_graph();
+
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    glfwSwapBuffers(main_window);
+  }
+
+  ImGui_ImplOpenGL3_Shutdown();
+  ImGui_ImplGlfw_Shutdown();
+  ImGui::DestroyContext();
+  glfwDestroyWindow(main_window);
+  glfwTerminate();
+  return 0;
+}
+
+void draw_dockspace() {
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDocking;
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->WorkPos);
+    ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImGui::SetNextWindowViewport(viewport->ID);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+    window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |ImGuiWindowFlags_NoBackground;
+
+    bool p_open = true;
+    ImGui::Begin("MyDockSpace", &p_open, window_flags);
+
+    ImGui::PopStyleVar(3);
+
+    // DockSpace
+    if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_DockingEnable) {
+        ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
+        ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_AutoHideTabBar);
+    }
+    ImGui::End();
+}
+
+void create_triangle_vertex(ImVec2 from, ImVec2 p3, ImVec2& p1, ImVec2& p2, float arrow_sz = 10.0f, float angle = 60.0f) {
+    auto ImNormalized = [](const ImVec2& v) { return v * ImInvLength(v, 0.0f); };
+    const float pi = 3.1415926535897932384626433832795f;
+    angle = pi * (180 - ImClamp(angle, 1.0f, 89.0f)) / 180;
+    ImVec2 base,midline,origin;
+    midline = ImNormalized(p3 - from);
+    origin = p3 - midline * arrow_sz;
+    base = p3 - origin;
+    p1 = ImRotate(base, std::cosf(angle), std::sinf(angle)) + origin;
+    p2 = ImRotate(base, std::cosf(-angle), std::sinf(-angle)) + origin;
+}
+
+void draw_spline_with_arrow(ImDrawList *draw_list, std::vector<ImVec2> &spl, ImColor color, float thickness = 1.0f, float arrow_sz = 10.0f) {
+    //draw arrow head
+    ImVec2 p1, p2, p3;
+    p3 = spl[spl.size() - 1];
+    create_triangle_vertex(spl[spl.size() - 2], p3, p1, p2, arrow_sz);
+
+    draw_list->AddTriangleFilled(p1, p2, p3, color);
+    //draw spline
+    draw_list->PathLineTo(spl[0]); //start point
+    
+    for (size_t i = 0; i < (spl.size() - 1) / 3; i++) {
+        draw_list->PathBezierCubicCurveTo(
+            spl[i * 3 + 1],
+            spl[i * 3 + 2],
+            spl[i * 3 + 3], 0);
+    }
+
+    if ((spl.size() - 1) % 3 == 1) {
+        draw_list->PathLineTo(spl[spl.size() - 1]);
+    }
+    else if ((spl.size() - 1) % 3 == 2) {
+        draw_list->PathLineTo(spl[spl.size() - 2]);
+        draw_list->PathLineTo(spl[spl.size() - 1]);
+    }
+    else { } //==0
+
+    draw_list->PathStroke(color, thickness);
+}
+
+void render_graph() {
+    const dot_layout::DirectedGraph graph{
+      {{"source", "Source"}, {"parse", "Parse"}, {"validate", "Validate"},
+       {"render", "Render"}},
+      {{"source", "parse", "read file"},
+       {"parse", "validate", "AST"},
+       {"parse", "parse", "error"},
+       {"parse", "parse", "warning"},
+       {"validate", "render", "valid"},
+       {"validate", "validate", "not valid"},
+       {"parse", "render", "invalid"}}};
+
+    ImGui::Begin("canvas", NULL, ImGuiWindowFlags_MenuBar);
+    static ImDrawList *draw_list = ImGui::GetWindowDrawList();
+    draw_list->ChannelsSplit(2);
+    ImGuiStyle &style = ImGui::GetStyle();
+    const auto& origin = ImGui::GetCursorScreenPos();
+    static float& scale = style.FontScaleMain;
+    static dot_layout::LayoutOptions options;
+    static float rank_separation = 4.0f;
+    static float node_separation = 1.0f;
+    static float arrow_size = 10.0f;
+    const ImColor text_col = ImGui::GetStyle().Colors[ImGuiCol_Text];
+    const ImColor line_col = ImGui::GetStyle().Colors[ImGuiCol_PlotLines];
+    ImColor node_col = ImGui::GetStyle().Colors[ImGuiCol_FrameBg];node_col.Value.w = 1.0f;
+
+    if (ImGui::BeginMenuBar()) {
+        if(ImGui::BeginMenu("settings")) {
+            ImGui::DragFloat("Scale", &scale, 0.01f, 0.2f, 3.0f);
+            ImGui::RadioButton("LeftToRight", options.rank_direction == dot_layout::RankDirection::LeftToRight);
+            if ( ImGui::IsItemClicked() ) {
+                options.rank_direction = dot_layout::RankDirection::LeftToRight;
+            }
+
+            ImGui::RadioButton("TopToBottom", options.rank_direction == dot_layout::RankDirection::TopToBottom);
+            if ( ImGui::IsItemClicked() )
+                options.rank_direction = dot_layout::RankDirection::TopToBottom;
+
+            ImGui::DragFloat("Rank Separation", &rank_separation, 0.01f, 0.01f, 100.0f);
+            ImGui::DragFloat("Node Separation", &node_separation, 0.01f, 0.01f, 100.0f);
+            ImGui::DragFloat("Arrow Size", &arrow_size, 0.01f, 0.0f, 100.0f);
+            ImGui::EndMenu();
+        }
+        ImGui::EndMenuBar();
+    }
+    options.rank_separation = rank_separation;
+    options.node_separation = node_separation;
+
+    const auto layout = dot_layout::DotLayout{}.layout(graph, options);
+    if (layout.nodes.size() != graph.nodes.size()) {
+        throw std::runtime_error("Layout result is missing nodes");
+    }
+
+    auto to_screen = [&](dot_layout::Point point) {
+    return ImVec2( origin.x + (point.x - layout.bounds.min_x) * scale, 
+        origin.y + (layout.bounds.max_y - point.y) * scale);
+    };
+    auto spline_to_screen = [&](const std::vector<dot_layout::Point>& spline) {
+        std::vector<ImVec2> result;
+        result.reserve(spline.size());
+        for (const auto& point : spline) {
+            result.push_back(to_screen(point));
+        }
+        return result;
+    };
+
+    // Draw nodes
+    draw_list->ChannelsSetCurrent(1);
+    for (const auto& node : layout.nodes) {
+        const float x = origin.x + (node.center.x - layout.bounds.min_x) * scale;
+        const float y = origin.y + (layout.bounds.max_y - node.center.y) * scale;
+        const float width = node.width * scale;
+        const float height = node.height * scale;
+        const ImVec2 label_size = ImGui::CalcTextSize(node.id.c_str());
+        const ImVec2 label_pos(x - label_size.x * 0.5f, y - label_size.y * 0.5f);
+        const ImVec2 tl(x - width * 0.5f, y - height * 0.5f);
+        const ImVec2 br(x + width * 0.5f, y + height * 0.5f);
+        
+        draw_list->AddRectFilled(tl, br, node_col);
+        draw_list->AddText(label_pos, text_col, node.id.c_str());
+    }
+    
+    // Draw edges
+    draw_list->ChannelsSetCurrent(0);
+    for (const auto& edge : layout.edges) {
+        for (const auto& spline : edge.spline_points) {
+            auto spl = spline_to_screen(spline);
+            draw_spline_with_arrow(draw_list, spl, line_col, 1.0f, arrow_size);
+        }
+        if (edge.label) {
+            const ImVec2 center = to_screen(edge.label->center);
+            const ImVec2 half_size(edge.label->width * scale * 0.5f,
+                                edge.label->height * scale * 0.5f);
+            draw_list->AddText(
+                ImVec2(center.x - half_size.x, center.y - half_size.y), text_col, edge.label->text.c_str());
+        }
+    }
+
+    draw_list->ChannelsMerge();
+
+    ImGui::End();
+}
