@@ -127,6 +127,20 @@ double parseDimension(const char* value, const char* description) {
   return dimension_inches * 72.0;
 }
 
+Point nodeBoundaryPoint(const NodeLayout& node, Point point) {
+  const double dx = point.x - node.center.x;
+  const double dy = point.y - node.center.y;
+  const double rx = node.width / 2.0;
+  const double ry = node.height / 2.0;
+  if (rx <= 0.0 || ry <= 0.0 || (dx == 0.0 && dy == 0.0)) {
+    throw std::runtime_error("Cannot determine arrow intersection with node");
+  }
+  const double factor = node.shape == NodeShape::Box
+      ? 1.0 / std::max(std::abs(dx) / rx, std::abs(dy) / ry)
+      : 1.0 / std::hypot(dx / rx, dy / ry);
+  return {node.center.x + dx * factor, node.center.y + dy * factor};
+}
+
 } // namespace
 
 LayoutResult DotLayout::layout(const DirectedGraph& input,
@@ -249,10 +263,11 @@ LayoutResult DotLayout::layout(const DirectedGraph& input,
   for (std::size_t i = 0; i < input.edges.size(); ++i) {
     const auto& input_edge = input.edges[i];
     Agedge_t* graph_edge = graph_edges[i];
-    EdgeLayout edge_layout{input_edge.from, input_edge.to, {}, std::nullopt};
+    EdgeLayout edge_layout{input_edge.from, input_edge.to, {}, std::nullopt, {}};
 
     if (const splines* edge_splines = ED_spl(graph_edge)) {
       edge_layout.spline_points.reserve(edge_splines->size);
+      edge_layout.arrow_tips.reserve(edge_splines->size);
       result.bounds.min_x = std::min(result.bounds.min_x, edge_splines->bb.LL.x);
       result.bounds.min_y = std::min(result.bounds.min_y, edge_splines->bb.LL.y);
       result.bounds.max_x = std::max(result.bounds.max_x, edge_splines->bb.UR.x);
@@ -268,6 +283,17 @@ LayoutResult DotLayout::layout(const DirectedGraph& input,
               {spline.list[point_index].x, spline.list[point_index].y});
         }
         edge_layout.spline_points.push_back(std::move(points));
+        if (spline.eflag != 0) {
+          const auto& target = result.nodes[node_indices.at(input_edge.to)];
+          const Point tip = nodeBoundaryPoint(target, {spline.ep.x, spline.ep.y});
+          edge_layout.arrow_tips.push_back(tip);
+          result.bounds.min_x = std::min(result.bounds.min_x, tip.x);
+          result.bounds.min_y = std::min(result.bounds.min_y, tip.y);
+          result.bounds.max_x = std::max(result.bounds.max_x, tip.x);
+          result.bounds.max_y = std::max(result.bounds.max_y, tip.y);
+        } else {
+          edge_layout.arrow_tips.push_back(std::nullopt);
+        }
       }
     }
 

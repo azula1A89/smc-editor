@@ -49,7 +49,7 @@ auto layout = dot_layout::DotLayout{}.layout(graph);
 
 示例的 `settings` 菜单提供逐节点形状和逐边权重控制，边控件编号用于区分平行边；更改仅保留在当前运行期间。示例对非 point 节点显示节点 ID，不显示 point 文字。
 
-节点和边的坐标/尺寸均以 Graphviz point 为单位（72 point = 1 inch）；节点的 Graphviz `pos` 属性以 point 返回，`width`/`height` 属性以 inch 返回，包装类统一换算为 point。边 spline 控制点、边标签中心及标签尺寸直接从布局后的 Graphviz 结构读取；其中标签尺寸由 Graphviz 布局估算。边几何使用 Graphviz 16.1.0 的 `common/types.h` 布局结构，升级 Graphviz 时应重新核对这些字段。`bounds` 包含节点包围矩形、边 spline 包围框和边标签范围。
+节点和边的坐标/尺寸均以 Graphviz point 为单位（72 point = 1 inch）；节点的 Graphviz `pos` 属性以 point 返回，`width`/`height` 属性以 inch 返回，包装类统一换算为 point。边 spline 控制点、边标签中心及标签尺寸直接从布局后的 Graphviz 结构读取；其中标签尺寸由 Graphviz 布局估算。`EdgeLayout::arrow_tips` 与 `spline_points` 一一对应：有箭头的组包含 Graphviz 箭尖坐标，并沿节点中心到该坐标的方向校正到目标节点的绘制边界；没有箭头的组为 `std::nullopt`。曲线终点是 Graphviz 为箭头预留空间后的位置，绘制时应连接终点与箭尖，并以箭尖为三角形顶点；自定义箭头大小不改变箭尖位置。边几何使用 Graphviz 16.1.0 的 `common/types.h` 布局结构，升级 Graphviz 时应重新核对这些字段。`bounds` 包含节点包围矩形、边 spline 包围框、箭尖和边标签范围，不包含自定义箭头三角形的全部范围。
 
 ImGui 绘制时，可按自己的缩放比例将 Graphviz 坐标从图形坐标变换到屏幕坐标。例如以 `bounds` 左上角作为屏幕原点时：
 
@@ -77,12 +77,18 @@ auto toScreen = [&](dot_layout::Point point) {
 };
 
 for (const auto& edge : layout.edges) {
-  for (const auto& spline : edge.spline_points) {
+  for (std::size_t group = 0; group < edge.spline_points.size(); ++group) {
+    const auto& spline = edge.spline_points[group];
     for (std::size_t i = 0; i + 3 < spline.size(); i += 3) {
       drawList->AddBezierCubic(
           toScreen(spline[i]), toScreen(spline[i + 1]),
           toScreen(spline[i + 2]), toScreen(spline[i + 3]),
           IM_COL32(180, 180, 180, 255), 1.0f);
+    }
+    if (!spline.empty() && edge.arrow_tips[group]) {
+      // 连接曲线终点与箭尖，并按需以箭尖为顶点绘制箭头三角形。
+      drawList->AddLine(toScreen(spline.back()), toScreen(*edge.arrow_tips[group]),
+                        IM_COL32(180, 180, 180, 255), 1.0f);
     }
   }
   if (edge.label) {

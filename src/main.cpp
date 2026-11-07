@@ -162,28 +162,13 @@ void draw_dockspace() {
     ImGui::End();
 }
 
-void create_triangle_vertex(ImVec2 from, ImVec2 p3, ImVec2& p1, ImVec2& p2, float arrow_sz = 10.0f, float angle = 60.0f) {
-    auto ImNormalized = [](const ImVec2& v) { return v * ImInvLength(v, 0.0f); };
-    const float pi = 3.1415926535897932384626433832795f;
-    angle = pi * (180 - ImClamp(angle, 1.0f, 89.0f)) / 180;
-    ImVec2 base,midline,origin;
-    midline = ImNormalized(p3 - from);
-    origin = p3 - midline * arrow_sz;
-    base = p3 - origin;
-    p1 = ImRotate(base, std::cosf(angle), std::sinf(angle)) + origin;
-    p2 = ImRotate(base, std::cosf(-angle), std::sinf(-angle)) + origin;
-}
+void draw_spline_with_arrow(ImDrawList *draw_list, const std::vector<ImVec2> &spl,
+                            const std::optional<ImVec2>& tip, ImColor color,
+                            float thickness = 1.0f, float arrow_sz = 10.0f) {
+    if (spl.empty())
+        return;
+    draw_list->PathLineTo(spl[0]);
 
-void draw_spline_with_arrow(ImDrawList *draw_list, std::vector<ImVec2> &spl, ImColor color, float thickness = 1.0f, float arrow_sz = 10.0f) {
-    //draw arrow head
-    ImVec2 p1, p2, p3;
-    p3 = spl[spl.size() - 1];
-    create_triangle_vertex(spl[spl.size() - 2], p3, p1, p2, arrow_sz);
-
-    draw_list->AddTriangleFilled(p1, p2, p3, color);
-    //draw spline
-    draw_list->PathLineTo(spl[0]); //start point
-    
     for (size_t i = 0; i < (spl.size() - 1) / 3; i++) {
         draw_list->PathBezierCubicCurveTo(
             spl[i * 3 + 1],
@@ -200,7 +185,27 @@ void draw_spline_with_arrow(ImDrawList *draw_list, std::vector<ImVec2> &spl, ImC
     }
     else { } //==0
 
+    if (tip)
+        draw_list->PathLineTo(*tip);
     draw_list->PathStroke(color, thickness);
+
+    if (tip && arrow_sz > 0.0f) {
+        ImVec2 delta;
+        float length_squared = 0.0f;
+        for (auto point = spl.rbegin(); point != spl.rend(); ++point) {
+            delta = *tip - *point;
+            length_squared = delta.x * delta.x + delta.y * delta.y;
+            if (length_squared > 0.0f)
+                break;
+        }
+        if (length_squared == 0.0f)
+            throw std::runtime_error("Cannot determine arrow direction");
+        const ImVec2 direction = delta * (1.0f / std::sqrt(length_squared));
+        const ImVec2 base = *tip - direction * arrow_sz;
+        const ImVec2 side(-direction.y * arrow_sz * 0.4f,
+                          direction.x * arrow_sz * 0.4f);
+        draw_list->AddTriangleFilled(*tip, base + side, base - side, color);
+    }
 }
 
 void render_graph() {
@@ -337,9 +342,12 @@ void render_graph() {
         // Draw edges
         draw_list->ChannelsSetCurrent(0);
         for (const auto& edge : layout.edges) {
-            for (const auto& spline : edge.spline_points) {
-                auto spl = spline_to_screen(spline);
-                draw_spline_with_arrow(draw_list, spl, line_col, 1.0f, arrow_size);
+            for (std::size_t i = 0; i < edge.spline_points.size(); ++i) {
+                auto spl = spline_to_screen(edge.spline_points[i]);
+                std::optional<ImVec2> tip;
+                if (edge.arrow_tips[i])
+                    tip = to_screen(*edge.arrow_tips[i]);
+                draw_spline_with_arrow(draw_list, spl, tip, line_col, 1.0f, arrow_size);
             }
             if (edge.label) {
                 const ImVec2 center = to_screen(edge.label->center);

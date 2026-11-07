@@ -1,5 +1,6 @@
 #include "dot_layout.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -117,6 +118,51 @@ void testDefaultWeight() {
   }
 }
 
+void testArrowTipsOnNodeBoundaries() {
+  using namespace dot_layout;
+  for (const auto shape : {NodeShape::Box, NodeShape::Circle,
+                           NodeShape::Ellipse, NodeShape::Point}) {
+    for (const auto direction : {RankDirection::TopToBottom,
+                                 RankDirection::LeftToRight,
+                                 RankDirection::BottomToTop,
+                                 RankDirection::RightToLeft}) {
+      const DirectedGraph graph{
+          {{"source", "Source"}, {"target", "Target", shape}},
+          {{"source", "target", ""}, {"source", "target", "parallel"},
+           {"target", "target", "loop"}}};
+      LayoutOptions options;
+      options.rank_direction = direction;
+      const auto result = DotLayout{}.layout(graph, options);
+      const auto& node = result.nodes[1];
+      for (const auto& edge : result.edges) {
+        require(edge.arrow_tips.size() == edge.spline_points.size(),
+                "Arrow tips do not match spline groups");
+        bool found_tip = false;
+        for (std::size_t i = 0; i < edge.arrow_tips.size(); ++i) {
+          if (!edge.arrow_tips[i])
+            continue;
+          found_tip = true;
+          const auto tip = *edge.arrow_tips[i];
+          const double dx = (tip.x - node.center.x) / (node.width / 2.0);
+          const double dy = (tip.y - node.center.y) / (node.height / 2.0);
+          const double boundary = shape == NodeShape::Box
+              ? std::max(std::abs(dx), std::abs(dy)) : std::hypot(dx, dy);
+          require(std::abs(boundary - 1.0) < 1e-9,
+                  "Arrow tip is not on the target node boundary");
+          require(!edge.spline_points[i].empty(), "Arrow has no spline");
+          const auto end = edge.spline_points[i].back();
+          require(std::hypot(tip.x - end.x, tip.y - end.y) > 1e-6,
+                  "Arrow has no direction");
+          require(tip.x >= result.bounds.min_x && tip.x <= result.bounds.max_x &&
+                      tip.y >= result.bounds.min_y && tip.y <= result.bounds.max_y,
+                  "Arrow tip is outside layout bounds");
+        }
+        require(found_tip, "Directed edge is missing its arrow tip");
+      }
+    }
+  }
+}
+
 } // namespace
 
 int main() {
@@ -125,6 +171,7 @@ int main() {
     testValidation();
     testWeightAffectsLayout();
     testDefaultWeight();
+    testArrowTipsOnNodeBoundaries();
   } catch (const std::exception& error) {
     std::cerr << "dot_layout_tests: " << error.what() << '\n';
     return 1;

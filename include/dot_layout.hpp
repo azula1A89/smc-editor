@@ -69,6 +69,7 @@ struct EdgeLayout {
   std::string to;
   std::vector<std::vector<Point>> spline_points;
   std::optional<EdgeLabelLayout> label;
+  std::vector<std::optional<Point>> arrow_tips;
 };
 
 struct Bounds {
