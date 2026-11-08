@@ -12,7 +12,8 @@ void require(bool condition, const char* message) {
 }
 
 void frame(float x, float y, std::optional<bool> mouse = std::nullopt,
-           std::optional<dot_layout::DirectedGraph> graph = std::nullopt) {
+           std::optional<dot_layout::DirectedGraph> graph = std::nullopt,
+           std::optional<GraphFocus> focus = std::nullopt) {
     ImGuiIO& io = ImGui::GetIO();
     io.AddMousePosEvent(x, y);
     if (mouse)
@@ -20,7 +21,7 @@ void frame(float x, float y, std::optional<bool> mouse = std::nullopt,
     ImGui::NewFrame();
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(900, 600), ImGuiCond_Always);
-    render_graph(std::move(graph));
+    render_graph(std::move(graph), nullptr, std::move(focus));
     ImGui::Render();
 }
 
@@ -66,6 +67,23 @@ std::uint64_t canvasGeometry() {
         hash = (hash ^ static_cast<std::uint64_t>(y)) * 1099511628211ull;
     }
     return hash;
+}
+
+bool hasVertexColor(ImU32 color) {
+    ImGuiWindow* canvas = ImGui::FindWindowByName("canvas");
+    for (const ImDrawVert& vertex : canvas->DrawList->VtxBuffer)
+        if (vertex.col == color)
+            return true;
+    return false;
+}
+
+bool hasVertexNear(ImVec2 point, ImU32 color, float tolerance = 3.0f) {
+    ImGuiWindow* canvas = ImGui::FindWindowByName("canvas");
+    for (const ImDrawVert& vertex : canvas->DrawList->VtxBuffer)
+        if (vertex.col == color && std::abs(vertex.pos.x - point.x) <= tolerance &&
+            std::abs(vertex.pos.y - point.y) <= tolerance)
+            return true;
+    return false;
 }
 
 void checkClusterBorders() {
@@ -170,6 +188,20 @@ int main() {
         const auto fsm_canvas = canvasGeometry();
         frame(800, 500);
         require(canvasGeometry() == fsm_canvas, "FSM graph did not persist across frames");
+        const GraphFocus focused_state{GraphObjectKind::state, {0}};
+        frame(800, 500, std::nullopt, fsm_graph, focused_state);
+        const ImU32 focus_color = IM_COL32(45, 220, 95, 255);
+        require(hasVertexColor(focus_color), "Focused graph object is not highlighted");
+        ImGuiWindow* canvas = ImGui::FindWindowByName("canvas");
+        const ImVec2 content_center = canvas->ContentRegionRect.GetCenter();
+        require(hasVertexNear(content_center, focus_color, 20.0f),
+                "Focused graph object was not centered in the canvas");
+        const GraphFocus focused_map{GraphObjectKind::state_map, {0}};
+        frame(800, 500, std::nullopt, fsm_graph, focused_map);
+        require(hasVertexColor(focus_color), "Focused state map is not highlighted");
+        const GraphFocus focused_guard{GraphObjectKind::guard, {0}};
+        frame(800, 500, std::nullopt, fsm_graph, focused_guard);
+        require(hasVertexColor(focus_color), "Focused transition guard is not highlighted");
         auto renamed = *fsm_graph;
         renamed.nodes[0].label = "A much longer state label";
         frame(800, 500, std::nullopt, renamed);

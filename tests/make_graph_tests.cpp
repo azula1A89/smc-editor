@@ -16,11 +16,36 @@ void testConversion() {
     std::ifstream input(input_file, std::ios::binary);
     const std::string contents((std::istreambuf_iterator<char>(input)),
                                std::istreambuf_iterator<char>());
-    const auto graph_from_editor = make_graph_from_contents(contents, input_file);
+    std::vector<SourceSegment> source_segments;
+    const auto graph_from_editor = make_graph_from_contents(
+        contents, input_file, nullptr, &source_segments);
     require(graph_from_editor.has_value() &&
                 graph_from_editor->nodes.size() == graph->nodes.size() &&
                 graph_from_editor->edges.size() == graph->edges.size(),
             "Editor contents did not produce the same graph as file input");
+    const auto other_map_focus = focus_at_offset(
+        source_segments, contents.find("%map Other"));
+    require(other_map_focus && other_map_focus->kind == GraphObjectKind::state_map &&
+                other_map_focus->graph_indices == std::vector<std::size_t>{1},
+            "Map declaration did not map to its cluster");
+    const auto state_focus = focus_at_offset(
+        source_segments, contents.find("OtherState"));
+    require(state_focus && state_focus->kind == GraphObjectKind::state &&
+                state_focus->graph_indices == std::vector<std::size_t>{1},
+            "State declaration did not map to its node");
+    const auto transition_offset = contents.find("go(value");
+    const auto transition_focus = focus_at_offset(source_segments, transition_offset);
+    require(transition_focus &&
+                transition_focus->kind == GraphObjectKind::transition &&
+                transition_focus->graph_indices == std::vector<std::size_t>({0, 1}),
+            "Transition declaration did not map to its guard edges");
+    const auto guard_focus = focus_at_offset(
+        source_segments, contents.find("[value > 0]"));
+    require(guard_focus && guard_focus->kind == GraphObjectKind::guard &&
+                guard_focus->graph_indices == std::vector<std::size_t>{0},
+            "Guard declaration did not map to its edge");
+    require(editor_offset_at_position("a\n猫z", TextEditor::DocPos(1, 1)) == 5,
+            "Editor cursor position did not convert through UTF-8 text");
 
     DiagnosticLog diagnostics;
     require(!make_graph_from_contents("%unknown\n", "editor.sm", &diagnostics) &&
@@ -70,6 +95,25 @@ void testConversion() {
                 layout.edges.size() == graph->edges.size() &&
                 layout.clusters.size() == graph->clusters.size(),
             "Converted graph cannot be laid out");
+    const auto focused_state_point =
+        focused_graph_point(*state_focus, *graph, layout);
+    require(focused_state_point &&
+                focused_state_point->x == layout.nodes[1].center.x &&
+                focused_state_point->y == layout.nodes[1].center.y,
+            "Focused state did not resolve to its graph node position");
+    const auto focused_map_point =
+        focused_graph_point(*other_map_focus, *graph, layout);
+    const auto& other_map_bounds = layout.clusters[1].bounds;
+    require(focused_map_point &&
+                focused_map_point->x == (other_map_bounds.min_x + other_map_bounds.max_x) * 0.5 &&
+                focused_map_point->y == (other_map_bounds.min_y + other_map_bounds.max_y) * 0.5,
+            "Focused map did not resolve to its cluster center");
+    const auto focused_guard_point =
+        focused_graph_point(*guard_focus, *graph, layout);
+    require(focused_guard_point && layout.edges[0].label &&
+                focused_guard_point->x == layout.edges[0].label->center.x &&
+                focused_guard_point->y == layout.edges[0].label->center.y,
+            "Focused guard did not resolve to its graph edge label");
 }
 
 } // namespace

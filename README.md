@@ -51,7 +51,7 @@ auto layout = dot_layout::DotLayout{}.layout(graph);
 
 `make_graph(input_file)` 读取并校验 SMC 文件，将每个 state map 转换为同名 cluster，将其全部状态（包括解析器补充的 `Default`）转换为节点。各 map 的同名状态使用不同 ID，只有 `%start` 指定的状态使用椭圆，其余默认使用矩形。每个 transition guard 对应一条边；标签包含事件名、参数、条件、动作以及 push/pop/jump 信息。普通目标、jump 和 push 支持当前 map 中的名称及 `map::state` 名称；push 边指向压入的状态，标签保留返回状态。`nil` 表示自环；pop 的真实目标由运行时状态栈决定，图中用标有 `dynamic destination` 的自环占位，不表示实际返回当前状态。文件读取、解析或校验失败时返回 `std::nullopt` 并输出诊断。运行示例时可通过第一个命令行参数指定文件；不指定时读取当前目录的 `mapmanager.sm`。
 
-示例 UI 包含独立的 SMC 编辑器、图形画布和状态/诊断窗口。编辑器使用 SMC 语法高亮；每次文本修改都会尝试解析和校验，只有成功时才替换当前有向图并更新 DOT 布局。输入无效时，状态窗口会显示诊断并保留最后一次成功的图；启动文件读取或分析失败时，暂时显示内置示例图，仍可在编辑器中输入有效内容。
+示例 UI 包含独立的 SMC 编辑器、图形画布和状态/诊断窗口。编辑器使用 SMC 语法高亮；每次文本修改都会尝试解析和校验，只有成功时才替换当前有向图并更新 DOT 布局。解析得到的 state map、state、transition 和 guard 的 `SourceLocation` 会转换为源文本一维区间，并映射到对应的 cluster、node 或 edge。光标所在对象变化时，图画布自动平移使该对象居中，并以绿色边框/线条/文字高亮；transition 覆盖其全部 guard edges。输入无效时，状态窗口会显示诊断并保留最后一次成功的图，同时停用与过期源码区间的光标映射；启动文件读取或分析失败时，暂时显示内置示例图，仍可在编辑器中输入有效内容。
 
 ### 子图、compound 和 ratio
 
