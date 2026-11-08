@@ -32,33 +32,26 @@ void SyntaxChecker::report(const SourceLocation& location, std::string message) 
     diagnostics_.push_back(Diagnostic{DiagnosticSeverity::error, location, std::move(message)});
 }
 
-bool SyntaxChecker::state_exists(std::string_view qualified_state,
-                                 std::string_view current_map,
-                                 const Fsm& fsm) const {
-    if (qualified_state == "nil") {
-        return true;
-    }
-
-    const auto separator = qualified_state.find("::");
-    const std::string_view map_name =
-        separator == std::string_view::npos ? current_map : qualified_state.substr(0, separator);
-    const std::string_view state_name =
-        separator == std::string_view::npos ? qualified_state : qualified_state.substr(separator + 2);
-
-    const auto map = std::find_if(fsm.maps.begin(), fsm.maps.end(),
-                                  [map_name](const StateMap& candidate) {
-                                      return candidate.name == map_name;
-                                  });
-    if (map == fsm.maps.end()) {
-        return false;
-    }
-    return std::any_of(map->states.begin(), map->states.end(),
-                       [state_name](const State& candidate) {
-                           return candidate.name == state_name;
-                       });
-}
-
 bool SyntaxChecker::check(const Fsm& fsm, std::string_view target_language) {
+    std::unordered_map<std::string_view, std::unordered_set<std::string_view>> state_index;
+    for (const auto& map : fsm.maps) {
+        auto [entry, inserted] = state_index.try_emplace(map.name);
+        if (inserted)
+            for (const auto& state : map.states)
+                entry->second.insert(state.name);
+    }
+    const auto state_exists = [&](std::string_view qualified_state,
+                                  std::string_view current_map) {
+        if (qualified_state == "nil")
+            return true;
+        const auto separator = qualified_state.find("::");
+        const auto map_name = separator == std::string_view::npos
+            ? current_map : qualified_state.substr(0, separator);
+        const auto state_name = separator == std::string_view::npos
+            ? qualified_state : qualified_state.substr(separator + 2);
+        const auto map = state_index.find(map_name);
+        return map != state_index.end() && map->second.contains(state_name);
+    };
     if (fsm.start_state.empty()) {
         report(fsm.location, "\"%start\" missing.");
     }
@@ -77,7 +70,7 @@ bool SyntaxChecker::check(const Fsm& fsm, std::string_view target_language) {
         separator + 2 >= fsm.start_state.size() ||
         fsm.start_state.find("::", separator + 2) != std::string::npos) {
         report(fsm.location, "Start state must be of the form \"map::state\".");
-    } else if (!state_exists(fsm.start_state, {}, fsm)) {
+    } else if (!state_exists(fsm.start_state, {})) {
         report(fsm.location, "Start state \"" + fsm.start_state + "\" does not exist.");
     }
 
@@ -109,14 +102,14 @@ bool SyntaxChecker::check(const Fsm& fsm, std::string_view target_language) {
                         is_default_target(guard.end_state)) {
                         report(guard.location, "May not transition to the default state.");
                     } else if (guard.transition_type != "pop" &&
-                               !state_exists(guard.end_state, map.name, fsm)) {
+                               !state_exists(guard.end_state, map.name)) {
                         report(guard.location, "No such state as \"" + guard.end_state + "\".");
                     }
 
                     if (guard.transition_type == "push") {
                         if (guard.push_state == "nil") {
                             report(guard.location, "May not push to nil state.");
-                        } else if (!state_exists(guard.push_state, map.name, fsm)) {
+                        } else if (!state_exists(guard.push_state, map.name)) {
                             report(guard.location,
                                    "No such state as \"" + guard.push_state + "\".");
                         }

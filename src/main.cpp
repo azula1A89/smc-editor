@@ -1,5 +1,9 @@
 #include <cmath>
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
+#include <mutex>
 #include <stdexcept>
 #include <optional>
 #include <fstream>
@@ -8,6 +12,8 @@
 #include <limits>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <imgui_freetype.h>
@@ -70,6 +76,7 @@ private:
 };
 
 using DiagnosticLog = std::vector<std::string>;
+thread_local bool defer_log_output = false;
 
 enum class GraphObjectKind { state_map, state, transition, guard };
 
@@ -96,6 +103,10 @@ std::optional<GraphFocus> focus_at_offset(
     const std::vector<SourceSegment>& source_segments, std::size_t offset);
 std::size_t editor_offset_at_position(
     std::string_view contents, TextEditor::DocPos position);
+std::size_t editor_offset_at_position(
+    std::string_view contents, const std::vector<std::size_t>& line_offsets,
+    TextEditor::DocPos position);
+std::vector<std::size_t> source_line_offsets(std::string_view contents);
 std::optional<dot_layout::Point> focused_graph_point(
     const GraphFocus& focus, const dot_layout::DirectedGraph& graph,
     const dot_layout::LayoutResult& layout);
@@ -105,6 +116,201 @@ void render_graph(std::optional<dot_layout::DirectedGraph> graph = std::nullopt,
                   DiagnosticLog* log = nullptr,
                   std::optional<GraphFocus> focus = std::nullopt);
 void render_diagnostics_window(DiagnosticLog& log);
+
+struct CanvasState {
+    dot_layout::DirectedGraph graph{
+      {{"a", "A"}, {"b", "B"}, {"c", "C"}},
+      {{"a", "b", "a->b", 1, "inner", "right"}, {"b", "c", "b->c"}},
+      {{"inner", "Inner", {"a"}, "outer"},
+       {"right", "Right", {"b"}, std::nullopt},
+       {"outer", "Outer", {"c"}, std::nullopt}}};
+    dot_layout::LayoutOptions options = [] {
+        dot_layout::LayoutOptions value;
+        value.compound = true;
+        value.rank_separation = 4.0;
+        value.node_separation = 1.0;
+        return value;
+    }();
+    std::optional<dot_layout::LayoutResult> layout;
+    bool dirty = true;
+    bool asynchronous = false;
+    bool recently_replaced = false;
+    std::uint64_t settings_revision = 0;
+};
+
+CanvasState& canvas_state() {
+    static CanvasState state;
+    return state;
+}
+
+struct AnalysisJob {
+    std::uint64_t revision;
+    std::optional<std::string> source;
+    std::string source_name;
+    dot_layout::DirectedGraph graph;
+    dot_layout::LayoutOptions options;
+};
+
+struct AnalysisResult {
+    std::uint64_t revision;
+    bool source_job;
+    std::optional<dot_layout::DirectedGraph> graph;
+    std::optional<dot_layout::LayoutResult> layout;
+    std::vector<SourceSegment> source_segments;
+    DiagnosticLog diagnostics;
+};
+
+class AnalysisWorker {
+public:
+    AnalysisWorker() : thread_([this] { run(); }) {}
+    ~AnalysisWorker() {
+        {
+            std::lock_guard lock(mutex_);
+            stopping_ = true;
+            pending_.reset();
+        }
+        condition_.notify_one();
+        thread_.join();
+    }
+
+    void submit(AnalysisJob job) {
+        {
+            std::lock_guard lock(mutex_);
+            pending_ = std::move(job);
+        }
+        condition_.notify_one();
+    }
+
+    std::optional<AnalysisResult> take_result() {
+        std::lock_guard lock(mutex_);
+        auto result = std::move(result_);
+        result_.reset();
+        return result;
+    }
+
+private:
+    void run() {
+        defer_log_output = true;
+        for (;;) {
+            std::optional<AnalysisJob> job;
+            {
+                std::unique_lock lock(mutex_);
+                condition_.wait(lock, [this] { return stopping_ || pending_.has_value(); });
+                if (stopping_)
+                    return;
+                job = std::move(pending_);
+                pending_.reset();
+            }
+            AnalysisResult result{job->revision, job->source.has_value()};
+            try {
+                result.graph = job->source
+                    ? make_graph_from_contents(*job->source, job->source_name,
+                                               &result.diagnostics, &result.source_segments)
+                    : std::optional<dot_layout::DirectedGraph>(std::move(job->graph));
+                if (result.graph) {
+                    auto layout_graph = *result.graph;
+                    if (!job->options.compound) {
+                        for (auto& edge : layout_graph.edges) {
+                            edge.tail_cluster.reset();
+                            edge.head_cluster.reset();
+                        }
+                    }
+                    result.layout = dot_layout::DotLayout{}.layout(layout_graph, job->options);
+                }
+            } catch (const std::exception& error) {
+                result.graph.reset();
+                result.layout.reset();
+                result.diagnostics.push_back(std::string("SMC analysis or layout failed: ") + error.what());
+            }
+            {
+                std::lock_guard lock(mutex_);
+                result_ = std::move(result);
+            }
+        }
+    }
+
+    std::mutex mutex_;
+    std::condition_variable condition_;
+    std::optional<AnalysisJob> pending_;
+    std::optional<AnalysisResult> result_;
+    bool stopping_ = false;
+    std::thread thread_;
+};
+
+class AnalysisCoordinator {
+public:
+    using Clock = std::chrono::steady_clock;
+
+    explicit AnalysisCoordinator(bool has_source, Clock::time_point now)
+        : source_needs_analysis_(has_source), deadline_(now) {}
+
+    void text_changed(Clock::time_point now) {
+        source_is_indexed_ = false;
+        source_needs_analysis_ = true;
+        deadline_ = now + std::chrono::milliseconds(500);
+        invalidate();
+    }
+
+    void settings_changed() { invalidate(); }
+
+    bool source_is_indexed() const { return source_is_indexed_; }
+    const std::vector<SourceSegment>& source_segments() const { return source_segments_; }
+
+    void accept(AnalysisResult result, CanvasState& canvas, DiagnosticLog& log) {
+        if (active_revision_ && *active_revision_ == result.revision)
+            active_revision_.reset();
+        if (result.revision != revision_)
+            return;
+        for (auto& message : result.diagnostics)
+            append_log(&log, std::move(message));
+        if (result.graph && result.layout) {
+            canvas.graph = std::move(*result.graph);
+            canvas.layout = std::move(*result.layout);
+            canvas.recently_replaced = result.source_job;
+            if (result.source_job) {
+                source_segments_ = std::move(result.source_segments);
+                source_is_indexed_ = true;
+                source_needs_analysis_ = false;
+                append_log(&log, "SMC analysis succeeded; graph and DOT layout updated.");
+            }
+        } else {
+            if (result.source_job) {
+                source_needs_analysis_ = false;
+                append_log(&log, "SMC analysis failed; retaining the last valid graph.");
+            }
+            canvas.dirty = result.source_job;
+        }
+    }
+
+    std::optional<AnalysisJob> next_job(Clock::time_point now, const std::string& source,
+                                        const std::string& source_name, CanvasState& canvas) {
+        if (active_revision_)
+            return std::nullopt;
+        std::optional<AnalysisJob> job;
+        if (source_needs_analysis_ && now >= deadline_)
+            job = AnalysisJob{revision_, source, source_name, {}, canvas.options};
+        else if (canvas.dirty && !source_needs_analysis_)
+            job = AnalysisJob{revision_, std::nullopt, source_name, canvas.graph, canvas.options};
+        if (job) {
+            active_revision_ = revision_;
+            canvas.dirty = false;
+        }
+        return job;
+    }
+
+private:
+    void invalidate() {
+        ++revision_;
+        active_revision_.reset();
+    }
+
+    std::uint64_t revision_ = 0;
+    std::optional<std::uint64_t> active_revision_;
+    bool source_needs_analysis_;
+    bool source_is_indexed_ = false;
+    Clock::time_point deadline_;
+    std::vector<SourceSegment> source_segments_;
+};
 
 int main(int argc, char **argv) {
   const char *glsl_version = "#version 330";
@@ -162,20 +368,17 @@ int main(int argc, char **argv) {
   TextEditor editor;
   editor.SetLanguage(smc_editor::language());
   DiagnosticLog log;
-  std::vector<SourceSegment> source_segments;
   const std::string input_file = argc > 1 ? argv[1] : "mapmanager.sm";
   const auto contents = read_input_file(input_file, &log);
   if (contents)
     editor.SetText(*contents);
-  auto graph_update = contents
-      ? make_graph_from_contents(editor.GetText(), input_file, &log, &source_segments)
-      : std::nullopt;
-  std::string indexed_source = graph_update ? editor.GetText() : std::string{};
-  if (graph_update)
-    append_log(&log, "SMC analysis succeeded; graph is ready.");
-  else if (contents)
-    append_log(&log, "Initial SMC analysis failed; displaying the built-in example graph.");
-  else
+  std::string editor_text = editor.GetText();
+  auto line_offsets = source_line_offsets(editor_text);
+  auto& canvas = canvas_state();
+  canvas.asynchronous = true;
+  AnalysisWorker worker;
+  AnalysisCoordinator coordinator(contents.has_value(), AnalysisCoordinator::Clock::now());
+  if (!contents)
     append_log(&log, "Displaying the built-in example graph until valid SMC is available.");
 
   // Main loop
@@ -196,28 +399,28 @@ int main(int argc, char **argv) {
     ImGui::End();
 
     if (editor_changed) {
-      std::vector<SourceSegment> updated_segments;
-      auto updated_graph = make_graph_from_contents(
-          editor.GetText(), input_file, &log, &updated_segments);
-      if (updated_graph) {
-        graph_update = std::move(updated_graph);
-        source_segments = std::move(updated_segments);
-        indexed_source = editor.GetText();
-        append_log(&log, "SMC analysis succeeded; graph and DOT layout will be updated.");
-      } else {
-        append_log(&log, "SMC analysis failed; retaining the last valid graph.");
-      }
+      editor_text = editor.GetText();
+      line_offsets = source_line_offsets(editor_text);
+      coordinator.text_changed(AnalysisCoordinator::Clock::now());
     }
 
-    const auto editor_text = editor.GetText();
+    if (auto result = worker.take_result())
+      coordinator.accept(std::move(*result), canvas, log);
+
     std::optional<GraphFocus> focus;
-    if (editor_text == indexed_source) {
+    if (coordinator.source_is_indexed()) {
       const auto cursor_offset = editor_offset_at_position(
-          editor_text, editor.GetMainCursorPosition());
-      focus = focus_at_offset(source_segments, cursor_offset);
+          editor_text, line_offsets, editor.GetMainCursorPosition());
+      focus = focus_at_offset(coordinator.source_segments(), cursor_offset);
     }
-    render_graph(std::move(graph_update), &log, focus);
-    graph_update.reset();
+    const auto previous_settings_revision = canvas.settings_revision;
+    render_graph(std::nullopt, &log, focus);
+    if (canvas.settings_revision != previous_settings_revision)
+      coordinator.settings_changed();
+
+    if (auto job = coordinator.next_job(AnalysisCoordinator::Clock::now(),
+                                        editor_text, input_file, canvas))
+      worker.submit(std::move(*job));
     render_diagnostics_window(log);
 
     ImGui::Render();
@@ -317,7 +520,8 @@ void drag_positive_value(const char* label, float& value, float speed, Diagnosti
 }
 
 void append_log(DiagnosticLog* log, std::string message) {
-    std::cerr << message << '\n';
+    if (!defer_log_output)
+        std::cerr << message << '\n';
     if (log)
         log->push_back(std::move(message));
 }
@@ -349,8 +553,6 @@ std::optional<std::string> read_input_file(const std::string& input_file, Diagno
     return contents;
 }
 
-namespace {
-
 std::vector<std::size_t> source_line_offsets(std::string_view contents) {
     std::vector<std::size_t> offsets{0};
     for (std::size_t index = 0; index < contents.size(); ++index) {
@@ -364,6 +566,8 @@ std::vector<std::size_t> source_line_offsets(std::string_view contents) {
     }
     return offsets;
 }
+
+namespace {
 
 std::size_t source_offset_at_location(
     std::string_view contents, const std::vector<std::size_t>& line_offsets,
@@ -394,17 +598,34 @@ bool same_focus(const std::optional<GraphFocus>& left,
                      left->graph_indices == right->graph_indices);
 }
 
+bool same_layout_options(const dot_layout::LayoutOptions& left,
+                         const dot_layout::LayoutOptions& right) {
+    const bool same_size = left.size.has_value() == right.size.has_value() &&
+        (!left.size || (left.size->width == right.size->width &&
+                        left.size->height == right.size->height));
+    return left.rank_direction == right.rank_direction &&
+           left.rank_separation == right.rank_separation &&
+           left.node_separation == right.node_separation &&
+           left.compound == right.compound && left.ratio == right.ratio &&
+           same_size;
+}
+
 } // namespace
 
 std::size_t editor_offset_at_position(
     std::string_view contents, TextEditor::DocPos position) {
-    const auto offsets = source_line_offsets(contents);
-    if (position.line >= offsets.size())
+    return editor_offset_at_position(contents, source_line_offsets(contents), position);
+}
+
+std::size_t editor_offset_at_position(
+    std::string_view contents, const std::vector<std::size_t>& line_offsets,
+    TextEditor::DocPos position) {
+    if (position.line >= line_offsets.size())
         return contents.size();
 
-    const std::size_t line_start = offsets[position.line];
-    const std::size_t line_end = position.line + 1 < offsets.size()
-        ? offsets[position.line + 1] : contents.size();
+    const std::size_t line_start = line_offsets[position.line];
+    const std::size_t line_end = position.line + 1 < line_offsets.size()
+        ? line_offsets[position.line + 1] : contents.size();
     std::size_t index = line_start;
     std::size_t glyph_index = 0;
     while (index < line_end && glyph_index < position.index) {
@@ -494,6 +715,12 @@ std::optional<dot_layout::DirectedGraph> make_graph_from_contents(
         state_ids.push_back(std::move(ids));
     }
 
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> state_lookup;
+    for (std::size_t i = 0; i < fsm->maps.size(); ++i) {
+        auto& states = state_lookup[fsm->maps[i].name];
+        for (std::size_t j = 0; j < fsm->maps[i].states.size(); ++j)
+            states.emplace(fsm->maps[i].states[j].name, state_ids[i][j]);
+    }
     const auto resolve_state = [&](const std::string& name, const std::string& current_map)
         -> std::optional<std::string> {
         const auto separator = name.find("::");
@@ -501,14 +728,11 @@ std::optional<dot_layout::DirectedGraph> make_graph_from_contents(
             ? current_map : name.substr(0, separator);
         const std::string state_name = separator == std::string::npos
             ? name : name.substr(separator + 2);
-        for (std::size_t i = 0; i < fsm->maps.size(); ++i) {
-            if (fsm->maps[i].name != map_name)
-                continue;
-            for (std::size_t j = 0; j < fsm->maps[i].states.size(); ++j)
-                if (fsm->maps[i].states[j].name == state_name)
-                    return state_ids[i][j];
-        }
-        return std::nullopt;
+        const auto map = state_lookup.find(map_name);
+        if (map == state_lookup.end())
+            return std::nullopt;
+        const auto state = map->second.find(state_name);
+        return state == map->second.end() ? std::nullopt : std::optional(state->second);
     };
     for (std::size_t map_index = 0; map_index < fsm->maps.size(); ++map_index) {
         const auto& map = fsm->maps[map_index];
@@ -601,17 +825,54 @@ void render_diagnostics_window(DiagnosticLog& log) {
         return;
     }
 
+    static const DiagnosticLog* measured_log = nullptr;
+    static std::size_t measured_count = 0;
+    struct LogLine { std::size_t message, begin, end; };
+    static std::vector<LogLine> lines;
+    static ImFont* measured_font = nullptr;
+    static float measured_font_size = 0.0f;
+    static float max_width = 0.0f;
     if (ImGui::Button("Clear"))
         log.clear();
 
     ImGui::Separator();
+    if (measured_log != &log || measured_count > log.size() ||
+        measured_font != ImGui::GetFont() || measured_font_size != ImGui::GetFontSize()) {
+        measured_log = &log;
+        measured_count = 0;
+        measured_font = ImGui::GetFont();
+        measured_font_size = ImGui::GetFontSize();
+        max_width = 0.0f;
+        lines.clear();
+    }
+    for (; measured_count < log.size(); ++measured_count) {
+        const auto& message = log[measured_count];
+        std::size_t begin = 0;
+        for (;;) {
+            const auto newline = message.find('\n', begin);
+            const auto end = newline == std::string::npos ? message.size() : newline;
+            lines.push_back({measured_count, begin, end});
+            max_width = std::max(max_width, ImGui::CalcTextSize(
+                message.data() + begin, message.data() + end).x);
+            if (newline == std::string::npos)
+                break;
+            begin = newline + 1;
+        }
+    }
+    ImGui::SetNextWindowContentSize(ImVec2(max_width + ImGui::GetStyle().WindowPadding.x * 2.0f, 0.0f));
     if (ImGui::BeginChild("DiagnosticLog", ImVec2(0.0f, 0.0f),
                           ImGuiChildFlags_Borders,
                           ImGuiWindowFlags_HorizontalScrollbar)) {
         const bool was_at_bottom =
             ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f;
-        for (const auto& message : log)
-            ImGui::TextUnformatted(message.c_str());
+        ImGuiListClipper clipper;
+        clipper.Begin(static_cast<int>(lines.size()));
+        while (clipper.Step())
+            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
+                const auto& line = lines[static_cast<std::size_t>(i)];
+                const auto& message = log[line.message];
+                ImGui::TextUnformatted(message.data() + line.begin, message.data() + line.end);
+            }
         if (was_at_bottom)
             ImGui::SetScrollHereY(1.0f);
     }
@@ -679,13 +940,10 @@ std::optional<dot_layout::Point> focused_graph_point(
 
 void render_graph(std::optional<dot_layout::DirectedGraph> graph_in, DiagnosticLog* log,
                   std::optional<GraphFocus> focus) {
-    static dot_layout::DirectedGraph graph{
-      {{"a", "A"}, {"b", "B"}, {"c", "C"}},
-      {{"a", "b", "a->b", 1, "inner", "right"}, {"b", "c", "b->c"}},
-      {{"inner", "Inner", {"a"}, "outer"},
-       {"right", "Right", {"b"}, std::nullopt},
-       {"outer", "Outer", {"c"}, std::nullopt}}};
-    const bool graph_replaced = graph_in.has_value();
+    auto& canvas = canvas_state();
+    auto& graph = canvas.graph;
+    const bool graph_replaced = graph_in.has_value() || canvas.recently_replaced;
+    canvas.recently_replaced = false;
     if (graph_in)
        graph = std::move(*graph_in);
     
@@ -696,11 +954,7 @@ void render_graph(std::optional<dot_layout::DirectedGraph> graph_in, DiagnosticL
     static auto origin = ImGui::GetCursorScreenPos();
     static float& scale = style.FontScaleMain;
     static std::optional<GraphFocus> previous_focus;
-    static dot_layout::LayoutOptions options = [] {
-        dot_layout::LayoutOptions initial;
-        initial.compound = true;
-        return initial;
-    }();
+    auto& options = canvas.options;
     static float rank_separation = 4.0f;
     static float node_separation = 1.0f;
     static float arrow_size = 10.0f;
@@ -709,6 +963,8 @@ void render_graph(std::optional<dot_layout::DirectedGraph> graph_in, DiagnosticL
     static float ratio_value = 1.0f;
     static float size_width = 8.0f;
     static float size_height = 6.0f;
+    bool graph_changed = graph_in.has_value();
+    const auto previous_options = options;
     const ImColor text_col = ImGui::GetStyle().Colors[ImGuiCol_Text];
     const ImColor line_col = ImGui::GetStyle().Colors[ImGuiCol_PlotLines];
     ImColor node_col = ImGui::GetStyle().Colors[ImGuiCol_FrameBg];node_col.Value.w = 1.0f;
@@ -768,8 +1024,10 @@ void render_graph(std::optional<dot_layout::DirectedGraph> graph_in, DiagnosticL
                     if (ImGui::BeginCombo(node.label.c_str(), shape_names[static_cast<int>(node.shape)])) {
                         for (std::size_t j = 0; j < 4; ++j) {
                             const bool selected = node.shape == shapes[j];
-                            if (ImGui::Selectable(shape_names[j], selected))
+                            if (ImGui::Selectable(shape_names[j], selected) && !selected) {
                                 node.shape = shapes[j];
+                                graph_changed = true;
+                            }
                             if (selected)
                                 ImGui::SetItemDefaultFocus();
                         }
@@ -780,21 +1038,25 @@ void render_graph(std::optional<dot_layout::DirectedGraph> graph_in, DiagnosticL
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Edge weights")) {
+                std::unordered_map<std::string_view, std::string_view> labels;
+                labels.reserve(graph.nodes.size());
+                for (const auto& node : graph.nodes)
+                    labels.emplace(node.id, node.label);
                 for (std::size_t i = 0; i < graph.edges.size(); ++i) {
                     auto& edge = graph.edges[i];
                     ImGui::PushID(static_cast<int>(i));
-                    const auto label_for = [&](const std::string& id) -> const std::string& {
-                        const auto node = std::find_if(graph.nodes.begin(), graph.nodes.end(),
-                            [&](const auto& candidate) { return candidate.id == id; });
-                        if (node == graph.nodes.end())
+                    const auto label_for = [&](const std::string& id) -> std::string_view {
+                        const auto node = labels.find(id);
+                        if (node == labels.end())
                             throw std::runtime_error("Edge endpoint is missing from graph");
-                        return node->label;
+                        return node->second;
                     };
-                    const std::string name = label_for(edge.from) + " -> " + label_for(edge.to) +
+                    const std::string name = std::string(label_for(edge.from)) + " -> " +
+                        std::string(label_for(edge.to)) +
                         " (" + std::to_string(i + 1) + ")";
                     ImGui::SetNextItemWidth(100.0f);
-                    ImGui::DragInt(name.c_str(), &edge.weight, 1.0f, 1, 1000,
-                                   "%d", ImGuiSliderFlags_AlwaysClamp);
+                    graph_changed |= ImGui::DragInt(name.c_str(), &edge.weight, 1.0f, 1, 1000,
+                                                   "%d", ImGuiSliderFlags_AlwaysClamp);
                     ImGui::PopID();
                 }
                 ImGui::EndMenu();
@@ -822,14 +1084,27 @@ void render_graph(std::optional<dot_layout::DirectedGraph> graph_in, DiagnosticL
         break;
     }
 
-    auto layout_graph = graph;
-    if (!options.compound) {
-        for (auto& edge : layout_graph.edges) {
-            edge.tail_cluster.reset();
-            edge.head_cluster.reset();
-        }
+    if (graph_changed || !same_layout_options(previous_options, options)) {
+        canvas.dirty = true;
+        ++canvas.settings_revision;
     }
-    const auto layout = dot_layout::DotLayout{}.layout(layout_graph, options);
+    if (!canvas.asynchronous && (canvas.dirty || !canvas.layout)) {
+        auto layout_graph = graph;
+        if (!options.compound) {
+            for (auto& edge : layout_graph.edges) {
+                edge.tail_cluster.reset();
+                edge.head_cluster.reset();
+            }
+        }
+        canvas.layout = dot_layout::DotLayout{}.layout(layout_graph, options);
+        canvas.dirty = false;
+    }
+    if (!canvas.layout) {
+        draw_list->ChannelsMerge();
+        ImGui::End();
+        return;
+    }
+    const auto& layout = *canvas.layout;
 
     if (graph_replaced || !same_focus(previous_focus, focus)) {
         if (focus) {
@@ -855,6 +1130,26 @@ void render_graph(std::optional<dot_layout::DirectedGraph> graph_in, DiagnosticL
     return ImVec2( origin.x + (point.x - layout.bounds.min_x) * scale, 
         origin.y + (layout.bounds.max_y - point.y) * scale);
     };
+    const ImRect visible(draw_list->GetClipRectMin(), draw_list->GetClipRectMax());
+    const auto visible_rect = [&](ImVec2 min, ImVec2 max, float padding = 0.0f) {
+        return min.x - padding <= visible.Max.x && max.x + padding >= visible.Min.x &&
+               min.y - padding <= visible.Max.y && max.y + padding >= visible.Min.y;
+    };
+    const auto visible_spline = [&](const dot_layout::EdgeLayout& edge, std::size_t index) {
+        ImVec2 min(std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity());
+        ImVec2 max(-std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity());
+        const auto include = [&](ImVec2 point) {
+            min.x = std::min(min.x, point.x);
+            min.y = std::min(min.y, point.y);
+            max.x = std::max(max.x, point.x);
+            max.y = std::max(max.y, point.y);
+        };
+        for (const auto& point : edge.spline_points[index])
+            include(to_screen(point));
+        if (edge.arrow_tips[index])
+            include(to_screen(*edge.arrow_tips[index]));
+        return visible_rect(min, max, arrow_size + 4.0f);
+    };
     auto spline_to_screen = [&](const std::vector<dot_layout::Point>& spline) {
         std::vector<ImVec2> result;
         result.reserve(spline.size());
@@ -875,16 +1170,17 @@ void render_graph(std::optional<dot_layout::DirectedGraph> graph_in, DiagnosticL
             const ImVec2 bottom_right = to_screen({cluster.bounds.max_x, cluster.bounds.min_y});
             const bool highlighted =
                 focus_contains(GraphObjectKind::state_map, cluster_index);
-            draw_list->AddRect(top_left, bottom_right,
-                               highlighted ? focus_col : line_col,
-                               0.0f, highlighted ? 3.0f : 1.0f);
+            if (visible_rect(top_left, bottom_right, 4.0f))
+                draw_list->AddRect(top_left, bottom_right,
+                                   highlighted ? focus_col : line_col,
+                                   0.0f, highlighted ? 3.0f : 1.0f);
             if (cluster.label) {
                 const ImVec2 center = to_screen(cluster.label->center);
                 const ImVec2 text_size = ImGui::CalcTextSize(cluster.label->text.c_str());
-                draw_list->AddText(ImVec2(center.x - text_size.x * 0.5f,
-                                         center.y - text_size.y * 0.5f),
-                                   highlighted ? focus_col : text_col,
-                                   cluster.label->text.c_str());
+                const ImVec2 pos(center.x - text_size.x * 0.5f, center.y - text_size.y * 0.5f);
+                if (visible_rect(pos, ImVec2(pos.x + text_size.x, pos.y + text_size.y), 4.0f))
+                    draw_list->AddText(pos, highlighted ? focus_col : text_col,
+                                       cluster.label->text.c_str());
             }
         }
 
@@ -903,17 +1199,18 @@ void render_graph(std::optional<dot_layout::DirectedGraph> graph_in, DiagnosticL
             const ImVec2 br(x + width * 0.5f, y + height * 0.5f);
             const bool highlighted = focus_contains(GraphObjectKind::state, i);
             
-            if (node.shape == dot_layout::NodeShape::Box) {
+            if (visible_rect(tl, br, 4.0f) && node.shape == dot_layout::NodeShape::Box) {
                 draw_list->AddRectFilled(tl, br, node_col);
                 if (highlighted)
                     draw_list->AddRect(tl, br, focus_col, 0.0f, 3.0f);
-            } else {
+            } else if (visible_rect(tl, br, 4.0f)) {
                 draw_list->AddEllipseFilled(ImVec2(x, y), ImVec2(width * 0.5f, height * 0.5f), node_col);
                 if (highlighted)
                     draw_list->AddEllipse(ImVec2(x, y),
                         ImVec2(width * 0.5f, height * 0.5f), focus_col, 0, 3.0f);
             }
-            if (node.shape != dot_layout::NodeShape::Point)
+            if (node.shape != dot_layout::NodeShape::Point &&
+                visible_rect(label_pos, ImVec2(label_pos.x + label_size.x, label_pos.y + label_size.y), 4.0f))
                 draw_list->AddText(label_pos, highlighted ? focus_col : text_col,
                                    label.c_str());
         }
@@ -927,6 +1224,8 @@ void render_graph(std::optional<dot_layout::DirectedGraph> graph_in, DiagnosticL
                 focus_contains(GraphObjectKind::guard, edge_index);
             const auto edge_color = highlighted ? focus_col : line_col;
             for (std::size_t i = 0; i < edge.spline_points.size(); ++i) {
+                if (!visible_spline(edge, i))
+                    continue;
                 auto spl = spline_to_screen(edge.spline_points[i]);
                 std::optional<ImVec2> tip;
                 if (edge.arrow_tips[i])
@@ -938,9 +1237,11 @@ void render_graph(std::optional<dot_layout::DirectedGraph> graph_in, DiagnosticL
                 const ImVec2 center = to_screen(edge.label->center);
                 const ImVec2 half_size(edge.label->width * scale * 0.5f,
                                     edge.label->height * scale * 0.5f);
-                draw_list->AddText(
-                    ImVec2(center.x - half_size.x, center.y - half_size.y),
-                    highlighted ? focus_col : text_col, edge.label->text.c_str());
+                const ImVec2 pos(center.x - half_size.x, center.y - half_size.y);
+                const ImVec2 size = ImGui::CalcTextSize(edge.label->text.c_str());
+                if (visible_rect(pos, ImVec2(pos.x + size.x, pos.y + size.y), 4.0f))
+                    draw_list->AddText(pos, highlighted ? focus_col : text_col,
+                                       edge.label->text.c_str());
             }
         }
 
