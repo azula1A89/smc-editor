@@ -29,6 +29,7 @@ if(NOT TARGET imgui)
         ${color_te_SOURCE_DIR}/TextDiff.cpp
         ${color_te_SOURCE_DIR}/example/dejavu.cpp
         ${color_te_SOURCE_DIR}/example/notosans.cpp
+        ${color_te_SOURCE_DIR}/extras/TrieAutoComplete.cpp
     )
     target_compile_definitions(imgui PUBLIC "IMGUI_USE_WCHAR32")
     target_compile_definitions(imgui PUBLIC "IMGUI_DEFINE_MATH_OPERATORS")
@@ -43,6 +44,7 @@ if(NOT TARGET imgui)
     target_include_directories(imgui PUBLIC ${glfw_SOURCE_DIR}/include)
     target_include_directories(imgui PUBLIC ${color_te_SOURCE_DIR})
     target_include_directories(imgui PUBLIC ${color_te_SOURCE_DIR}/example)
+    target_include_directories(imgui PUBLIC ${color_te_SOURCE_DIR}/extras)
 
     target_link_libraries(imgui PUBLIC freetype glew_s glfw ${OPENGL_LIBRARIES})
 endif()

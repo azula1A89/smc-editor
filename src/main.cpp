@@ -35,6 +35,7 @@
 #include <smc/parser.hpp>
 #include <smc/syntax_checker.hpp>
 #include <TextEditor.h>
+#include <TrieAutoComplete.h>
 
 class NonCopyable {
 protected:
@@ -367,6 +368,9 @@ int main(int argc, char **argv) {
 
   TextEditor editor;
   editor.SetLanguage(smc_editor::language());
+  editor.SetShowMiniMapEnabled(true);
+  TrieAutoComplete autocomplete;
+  autocomplete.Connect(&editor);
   DiagnosticLog log;
   const std::string input_file = argc > 1 ? argv[1] : "mapmanager.sm";
   const auto contents = read_input_file(input_file, &log);
