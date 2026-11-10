@@ -2,22 +2,17 @@
 
 #include "smc/ast.hpp"
 
-#include <filesystem>
-
 namespace smc {
 
-class CppGenerator {
+class Generator {
 public:
-    virtual ~CppGenerator() = default;
+    virtual ~Generator() = default;
 
-    virtual Diagnostics generate(const Fsm& fsm,
-                                 const std::filesystem::path& output_directory) const = 0;
-};
-
-class CppGeneratorInterface final : public CppGenerator {
-public:
-    Diagnostics generate(const Fsm& fsm,
-                         const std::filesystem::path& output_directory) const override;
+    virtual void visit(const Fsm& fsm) = 0;
+    virtual void visit(const StateMap& map) = 0;
+    virtual void visit(const State& state) = 0;
+    virtual void visit(const Transition& transition) = 0;
+    virtual void visit(const Guard& guard) = 0;
 };
 
 } // namespace smc

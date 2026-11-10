@@ -8,6 +8,8 @@
 
 namespace smc {
 
+class Generator;
+
 struct Guard {
     std::string condition;
     std::string end_state;
@@ -16,6 +18,8 @@ struct Guard {
     std::string transition_type{"set"};
     std::string actions;
     SourceLocation location;
+
+    void accept(Generator& generator) const;
 };
 
 struct Transition {
@@ -23,6 +27,8 @@ struct Transition {
     std::string parameters;
     std::vector<Guard> guards;
     SourceLocation location;
+
+    void accept(Generator& generator) const;
 };
 
 struct State {
@@ -31,12 +37,16 @@ struct State {
     std::optional<std::string> exit_actions;
     std::vector<Transition> transitions;
     SourceLocation location;
+
+    void accept(Generator& generator) const;
 };
 
 struct StateMap {
     std::string name;
     std::vector<State> states;
     SourceLocation location;
+
+    void accept(Generator& generator) const;
 };
 
 struct Fsm {
@@ -54,6 +64,8 @@ struct Fsm {
     std::vector<std::string> declarations;
     std::vector<StateMap> maps;
     SourceLocation location;
+
+    void accept(Generator& generator) const;
 };
 
 } // namespace smc

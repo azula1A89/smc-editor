@@ -1,4 +1,3 @@
-#include "smc/generator.hpp"
 #include "smc/parser.hpp"
 #include "smc/syntax_checker.hpp"
 
@@ -31,7 +30,6 @@ void print_diagnostics(const smc::Diagnostics& diagnostics) {
 
 int main(int argc, char** argv) {
     std::string input_file;
-    std::string output_directory{"."};
     bool check_only = false;
     bool cpp_target = false;
 
@@ -46,7 +44,7 @@ int main(int argc, char** argv) {
                 std::cerr << "smc_cpp: -d requires an output directory\n";
                 return 2;
             }
-            output_directory = argv[++index];
+            ++index;
         } else if (!argument.empty() && argument.front() == '-') {
             std::cerr << "smc_cpp: unknown option '" << argument << "'\n";
             print_usage(std::cerr);
@@ -95,8 +93,9 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    smc::CppGeneratorInterface generator;
-    const auto generation_diagnostics = generator.generate(*fsm, output_directory);
-    print_diagnostics(generation_diagnostics);
-    return generation_diagnostics.empty() ? 0 : 1;
+    print_diagnostics({smc::Diagnostic{
+        smc::DiagnosticSeverity::error,
+        fsm->location,
+        "C++ code generation is not implemented; use --check to validate the FSM."}});
+    return 1;
 }

@@ -7,9 +7,11 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <analysis.hpp>
+#include <smc/generator.hpp>
 #include <smc/parser.hpp>
 #include <smc/syntax_checker.hpp>
 
@@ -90,6 +92,201 @@ int focus_priority(GraphObjectKind kind) {
     return 0;
 }
 
+class DirectedGraphGenerator final : public smc::Generator {
+public:
+    struct Result {
+        dot_layout::DirectedGraph graph;
+        std::vector<SourceSegment> source_segments;
+    };
+
+    DirectedGraphGenerator(const std::string& contents, const std::string& source_name,
+                           DiagnosticLog* log)
+        : contents_(contents), source_name_(source_name), log_(log),
+          line_offsets_(source_line_offsets(contents)) {}
+
+    std::optional<Result> generate(const smc::Fsm& fsm) {
+        fsm_ = &fsm;
+        for (const auto& map : fsm.maps) {
+            auto& states = state_lookup_[map.name];
+            for (const auto& state : map.states) {
+                states.emplace(state.name, "state_" + std::to_string(next_state_id_++));
+            }
+        }
+
+        fsm.accept(*this);
+        if (failed_)
+            return std::nullopt;
+
+        std::sort(located_foci_.begin(), located_foci_.end(),
+            [](const LocatedFocus& left, const LocatedFocus& right) {
+                if (left.offset != right.offset)
+                    return left.offset < right.offset;
+                return focus_priority(left.kind) > focus_priority(right.kind);
+            });
+        std::vector<SourceSegment> resolved_segments;
+        for (std::size_t index = 0; index < located_foci_.size();) {
+            const auto& focus = located_foci_[index];
+            std::size_t next = index + 1;
+            while (next < located_foci_.size() &&
+                   located_foci_[next].offset == focus.offset) {
+                ++next;
+            }
+            const std::size_t end = next < located_foci_.size()
+                ? located_foci_[next].offset : contents_.size();
+            if (focus.offset < end ||
+                (focus.offset == contents_.size() && resolved_segments.empty())) {
+                resolved_segments.push_back(
+                    {focus.offset, end, focus.kind, focus.graph_indices});
+            }
+            index = next;
+        }
+        return Result{std::move(graph_), std::move(resolved_segments)};
+    }
+
+    void visit(const smc::Fsm& fsm) override {
+        fsm_ = &fsm;
+        for (const auto& map : fsm.maps)
+            map.accept(*this);
+    }
+
+    void visit(const smc::StateMap& map) override {
+        if (failed_)
+            return;
+
+        current_map_ = &map;
+        const auto cluster_index = graph_.clusters.size();
+        graph_.clusters.push_back({map.name, map.name, {}, std::nullopt});
+        add_focus(map.location, GraphObjectKind::state_map, {cluster_index});
+        for (const auto& state : map.states)
+            state.accept(*this);
+        if (map.states.empty()) {
+            append_log(log_, source_name_ + ": state map '" + map.name +
+                "' has no states; cannot lay out an empty cluster");
+            failed_ = true;
+        }
+    }
+
+    void visit(const smc::State& state) override {
+        if (failed_)
+            return;
+
+        const std::string id = "state_" + std::to_string(graph_.nodes.size());
+        const auto node_index = graph_.nodes.size();
+        graph_.nodes.push_back({id, state.name,
+            current_map_->name + "::" + state.name == fsm_->start_state
+                ? dot_layout::NodeShape::Ellipse : dot_layout::NodeShape::Box});
+        graph_.clusters.back().nodes.push_back(id);
+        if (state.location.line != current_map_->location.line ||
+            state.location.column != current_map_->location.column) {
+            add_focus(state.location, GraphObjectKind::state, {node_index});
+        }
+
+        current_state_id_ = id;
+        for (const auto& transition : state.transitions)
+            transition.accept(*this);
+    }
+
+    void visit(const smc::Transition& transition) override {
+        if (failed_)
+            return;
+
+        const auto transition_edge_start = graph_.edges.size();
+        current_transition_ = &transition;
+        for (const auto& guard : transition.guards)
+            guard.accept(*this);
+        std::vector<std::size_t> transition_edges;
+        for (std::size_t edge_index = transition_edge_start;
+             edge_index < graph_.edges.size(); ++edge_index) {
+            transition_edges.push_back(edge_index);
+        }
+        if (!transition_edges.empty())
+            add_focus(transition.location, GraphObjectKind::transition,
+                      std::move(transition_edges));
+    }
+
+    void visit(const smc::Guard& guard) override {
+        if (failed_)
+            return;
+
+        const auto edge_index = graph_.edges.size();
+        std::string target = current_state_id_;
+        if (guard.transition_type != "pop") {
+            const auto& destination = guard.transition_type == "push"
+                ? guard.push_state : guard.end_state;
+            if (destination != "nil") {
+                const auto resolved = resolve_state(destination, current_map_->name);
+                if (!resolved) {
+                    append_log(log_, source_name_ +
+                        ": cannot resolve destination '" + destination +
+                        "' in map '" + current_map_->name + "'");
+                    failed_ = true;
+                    return;
+                }
+                target = *resolved;
+            }
+        }
+
+        std::string label = current_transition_->name;
+        label += "(" + current_transition_->parameters + ")";
+        if (!guard.condition.empty())
+            label += " [" + guard.condition + "]";
+        if (guard.transition_type == "push")
+            label += " / " + guard.end_state + "/push(" + guard.push_state + ")";
+        else if (guard.transition_type == "pop")
+            label += " / pop(" + guard.pop_arguments + ") [dynamic destination]";
+        else if (guard.transition_type == "jump")
+            label += " / jump(" + guard.end_state + ")";
+        if (!guard.actions.empty())
+            label += " {" + guard.actions + "}";
+        graph_.edges.push_back({current_state_id_, target, std::move(label)});
+        add_focus(guard.location, GraphObjectKind::guard, {edge_index});
+    }
+
+private:
+    struct LocatedFocus {
+        std::size_t offset;
+        GraphObjectKind kind;
+        std::vector<std::size_t> graph_indices;
+    };
+
+    void add_focus(const smc::SourceLocation& location, GraphObjectKind kind,
+                   std::vector<std::size_t> indices) {
+        located_foci_.push_back({
+            source_offset_at_location(contents_, line_offsets_, location),
+            kind, std::move(indices)});
+    }
+
+    std::optional<std::string> resolve_state(
+        const std::string& name, const std::string& current_map) const {
+        const auto separator = name.find("::");
+        const std::string map_name = separator == std::string::npos
+            ? current_map : name.substr(0, separator);
+        const std::string state_name = separator == std::string::npos
+            ? name : name.substr(separator + 2);
+        const auto map = state_lookup_.find(map_name);
+        if (map == state_lookup_.end())
+            return std::nullopt;
+        const auto state = map->second.find(state_name);
+        return state == map->second.end() ? std::nullopt
+                                           : std::optional(state->second);
+    }
+
+    const std::string& contents_;
+    const std::string& source_name_;
+    DiagnosticLog* log_;
+    std::vector<std::size_t> line_offsets_;
+    const smc::Fsm* fsm_ = nullptr;
+    const smc::StateMap* current_map_ = nullptr;
+    const smc::Transition* current_transition_ = nullptr;
+    std::string current_state_id_;
+    dot_layout::DirectedGraph graph_;
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
+        state_lookup_;
+    std::vector<LocatedFocus> located_foci_;
+    std::size_t next_state_id_ = 0;
+    bool failed_ = false;
+};
+
 } // namespace
 
 std::size_t editor_offset_at_position(
@@ -154,141 +351,13 @@ std::optional<dot_layout::DirectedGraph> make_graph_from_contents(
     if (!syntax_valid)
         return std::nullopt;
 
-    dot_layout::DirectedGraph graph;
-    struct LocatedFocus {
-        std::size_t offset;
-        GraphObjectKind kind;
-        std::vector<std::size_t> graph_indices;
-    };
-    std::vector<LocatedFocus> located_foci;
-    const auto line_offsets = source_line_offsets(contents);
-    const auto add_focus = [&](const smc::SourceLocation& location, GraphObjectKind kind,
-                               std::vector<std::size_t> indices) {
-        located_foci.push_back({source_offset_at_location(contents, line_offsets, location),
-                                kind, std::move(indices)});
-    };
-    std::vector<std::vector<std::string>> state_ids;
-    for (const auto& map : fsm->maps) {
-        const auto cluster_index = graph.clusters.size();
-        dot_layout::Cluster cluster{map.name, map.name, {}, std::nullopt};
-        add_focus(map.location, GraphObjectKind::state_map, {cluster_index});
-        std::vector<std::string> ids;
-        for (const auto& state : map.states) {
-            const std::string id = "state_" + std::to_string(graph.nodes.size());
-            const auto node_index = graph.nodes.size();
-            graph.nodes.push_back({id, state.name,
-                map.name + "::" + state.name == fsm->start_state
-                    ? dot_layout::NodeShape::Ellipse : dot_layout::NodeShape::Box});
-            if (state.location.line != map.location.line ||
-                state.location.column != map.location.column) {
-                add_focus(state.location, GraphObjectKind::state, {node_index});
-            }
-            cluster.nodes.push_back(id);
-            ids.push_back(id);
-        }
-        if (cluster.nodes.empty()) {
-            append_log(log, source_name + ": state map '" + map.name +
-                "' has no states; cannot lay out an empty cluster");
-            return std::nullopt;
-        }
-        graph.clusters.push_back(std::move(cluster));
-        state_ids.push_back(std::move(ids));
-    }
-
-    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> state_lookup;
-    for (std::size_t i = 0; i < fsm->maps.size(); ++i) {
-        auto& states = state_lookup[fsm->maps[i].name];
-        for (std::size_t j = 0; j < fsm->maps[i].states.size(); ++j)
-            states.emplace(fsm->maps[i].states[j].name, state_ids[i][j]);
-    }
-    const auto resolve_state = [&](const std::string& name, const std::string& current_map)
-        -> std::optional<std::string> {
-        const auto separator = name.find("::");
-        const std::string map_name = separator == std::string::npos
-            ? current_map : name.substr(0, separator);
-        const std::string state_name = separator == std::string::npos
-            ? name : name.substr(separator + 2);
-        const auto map = state_lookup.find(map_name);
-        if (map == state_lookup.end())
-            return std::nullopt;
-        const auto state = map->second.find(state_name);
-        return state == map->second.end() ? std::nullopt : std::optional(state->second);
-    };
-    for (std::size_t map_index = 0; map_index < fsm->maps.size(); ++map_index) {
-        const auto& map = fsm->maps[map_index];
-        for (std::size_t state_index = 0; state_index < map.states.size(); ++state_index) {
-            const auto& state = map.states[state_index];
-            const auto& source = state_ids[map_index][state_index];
-            for (const auto& transition : state.transitions) {
-                const auto transition_edge_start = graph.edges.size();
-                for (const auto& guard : transition.guards) {
-                    const auto edge_index = graph.edges.size();
-                    std::string target = source;
-                    if (guard.transition_type != "pop") {
-                        const auto& destination = guard.transition_type == "push"
-                            ? guard.push_state : guard.end_state;
-                        if (destination != "nil") {
-                            const auto resolved = resolve_state(destination, map.name);
-                            if (!resolved) {
-                                append_log(log, source_name +
-                                    ": cannot resolve destination '" + destination +
-                                    "' in map '" + map.name + "'");
-                                return std::nullopt;
-                            }
-                            target = *resolved;
-                        }
-                    }
-
-                    std::string label = transition.name + "(" + transition.parameters + ")";
-                    if (!guard.condition.empty())
-                        label += " [" + guard.condition + "]";
-                    if (guard.transition_type == "push")
-                        label += " / " + guard.end_state + "/push(" + guard.push_state + ")";
-                    else if (guard.transition_type == "pop")
-                        label += " / pop(" + guard.pop_arguments + ") [dynamic destination]";
-                    else if (guard.transition_type == "jump")
-                        label += " / jump(" + guard.end_state + ")";
-                    if (!guard.actions.empty())
-                        label += " {" + guard.actions + "}";
-                    graph.edges.push_back({source, target, std::move(label)});
-                    add_focus(guard.location, GraphObjectKind::guard, {edge_index});
-                }
-                std::vector<std::size_t> transition_edges;
-                for (std::size_t edge_index = transition_edge_start;
-                     edge_index < graph.edges.size(); ++edge_index) {
-                    transition_edges.push_back(edge_index);
-                }
-                if (!transition_edges.empty())
-                    add_focus(transition.location, GraphObjectKind::transition,
-                              std::move(transition_edges));
-            }
-        }
-    }
-    std::sort(located_foci.begin(), located_foci.end(),
-        [](const LocatedFocus& left, const LocatedFocus& right) {
-            if (left.offset != right.offset)
-                return left.offset < right.offset;
-            return focus_priority(left.kind) > focus_priority(right.kind);
-        });
-    std::vector<SourceSegment> resolved_segments;
-    for (std::size_t index = 0; index < located_foci.size();) {
-        const auto& focus = located_foci[index];
-        std::size_t next = index + 1;
-        while (next < located_foci.size() &&
-               located_foci[next].offset == focus.offset) {
-            ++next;
-        }
-        const std::size_t end = next < located_foci.size()
-            ? located_foci[next].offset : contents.size();
-        if (focus.offset < end || (focus.offset == contents.size() && resolved_segments.empty())) {
-            resolved_segments.push_back(
-                {focus.offset, end, focus.kind, focus.graph_indices});
-        }
-        index = next;
-    }
+    DirectedGraphGenerator generator(contents, source_name, log);
+    auto result = generator.generate(*fsm);
+    if (!result)
+        return std::nullopt;
     if (source_segments)
-        *source_segments = std::move(resolved_segments);
-    return graph;
+        *source_segments = std::move(result->source_segments);
+    return std::move(result->graph);
 }
 
 std::optional<dot_layout::DirectedGraph> make_graph(

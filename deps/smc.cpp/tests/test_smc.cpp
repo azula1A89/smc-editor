@@ -1,10 +1,8 @@
 #include "smc/lexer.hpp"
 #include "smc/parser.hpp"
 #include "smc/syntax_checker.hpp"
-#include "smc/generator.hpp"
 
 #include <cassert>
-#include <filesystem>
 #include <string>
 
 namespace {
@@ -123,15 +121,6 @@ Running { }
     assert(!checker.check(*fsm));
 }
 
-void test_generation_placeholder_reports_unsupported() {
-    smc::Fsm fsm;
-    fsm.location = smc::SourceLocation{"generation.sm", 1, 1};
-    smc::CppGeneratorInterface generator;
-    const auto diagnostics = generator.generate(fsm, std::filesystem::current_path());
-    assert(diagnostics.size() == 1);
-    assert(diagnostics.front().message.find("not implemented") != std::string::npos);
-}
-
 void test_parser_rejects_malformed_typed_parameter_and_action() {
     const std::string malformed_parameter = R"SMC(%start Main::Ready
 %class Context
@@ -192,7 +181,6 @@ int main() {
     test_checker_reports_missing_destination();
     test_default_state_entry_is_rejected();
     test_duplicate_unconditional_transition_is_rejected();
-    test_generation_placeholder_reports_unsupported();
     test_parser_rejects_malformed_typed_parameter_and_action();
     test_cross_map_destination_and_nested_parameter_type();
 }
