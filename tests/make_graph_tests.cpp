@@ -1,6 +1,11 @@
-#define main dot_layout_demo_main
-#include "../src/main.cpp"
-#undef main
+#include <analysis.hpp>
+#include <ui_windows.hpp>
+
+#include <fstream>
+#include <iostream>
+#include <iterator>
+#include <stdexcept>
+#include <string>
 
 namespace {
 

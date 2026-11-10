@@ -1,10 +1,23 @@
-#define main dot_layout_demo_main
-#include "../src/main.cpp"
-#undef main
-
 #include <ctime>
+#include <iostream>
+#include <stdexcept>
+
+#include <imgui.h>
+#include <imgui_internal.h>
+
+#include <dejavu.h>
+
+#include <analysis.hpp>
+#include <app_context.hpp>
+#include <ui_windows.hpp>
 
 namespace {
+
+AppContext& test_app() {
+    static AppContext app;
+    app.canvas.asynchronous = false;
+    return app;
+}
 
 void require(bool condition, const char* message) {
     if (!condition)
@@ -36,6 +49,17 @@ void test_worker() {
     require(valid.graph->nodes.size() == valid.layout->nodes.size() &&
                 valid.graph->edges.size() == valid.layout->edges.size(),
             "Worker returned inconsistent graph and layout");
+    UserSettings settings;
+    settings.capture_graph(*valid.graph);
+    settings.graph_preferences.node_shapes[0] =
+        static_cast<int>(dot_layout::NodeShape::Circle);
+    settings.graph_preferences.edge_weights[0] = 23;
+    worker.submit({7, *contents, file, {}, options, settings.graph_preferences});
+    auto customized = wait_for(worker, 7);
+    require(customized.graph &&
+                customized.graph->nodes[0].shape == dot_layout::NodeShape::Circle &&
+                customized.graph->edges[0].weight == 23,
+            "Worker did not restore saved node and edge preferences");
     worker.submit({2, std::string("%unknown\n"), file, {}, options});
     auto invalid = wait_for(worker, 2);
     require(!invalid.graph && !invalid.layout && !invalid.diagnostics.empty(),
@@ -133,19 +157,29 @@ void test_layout_cache_and_culling() {
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
     io.Fonts->AddFontFromMemoryCompressedTTF(
         static_cast<const void*>(&dejavu), dejavuSize, 15.0f);
-    canvas_state() = CanvasState{};
+    auto& app = test_app();
+    app.canvas = CanvasState{};
+    app.canvas.asynchronous = false;
+    app.settings = UserSettings{};
     const dot_layout::DirectedGraph graph{{{"single", "Single"}}, {}, {}};
-    const auto frame = [](std::optional<dot_layout::DirectedGraph> input = std::nullopt) {
+    const auto frame = [&app](
+                           std::optional<dot_layout::DirectedGraph> input = std::nullopt) {
         ImGui::NewFrame();
         ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(900, 600), ImGuiCond_Always);
-        render_graph(std::move(input));
+        if (input) {
+            app.canvas.graph = std::move(*input);
+            app.canvas.layout.reset();
+            app.canvas.dirty = true;
+            app.canvas.recently_replaced = true;
+        }
+        render_graph_window(app);
         ImGui::Render();
         return ImGui::FindWindowByName("canvas")->DrawList->VtxBuffer.Size;
     };
     frame(graph);
     const auto visible_vertices = frame();
-    auto& canvas = canvas_state();
+    auto& canvas = app.canvas;
     require(canvas.layout && canvas.layout->nodes.size() == 1, "Missing cached layout");
     canvas.layout->nodes[0].center.x += 100000.0;
     const auto moved_x = canvas.layout->nodes[0].center.x;
@@ -174,14 +208,14 @@ void test_layout_cache_and_culling() {
     require(crossing_vertices > offscreen_vertices,
             "Curve crossing the viewport was incorrectly culled");
 
-    DiagnosticLog log(1000, "diagnostic\nsecond line");
-    log.back() = std::string(500, 'x');
+    app.log.assign(1000, "diagnostic\nsecond line");
+    app.log.back() = std::string(500, 'x');
     ImGuiWindow* child = nullptr;
     for (int i = 0; i < 2; ++i) {
         ImGui::NewFrame();
         ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_Always);
-        render_diagnostics_window(log);
+        render_log_window(app);
         ImGui::Render();
         for (auto* window : ImGui::GetCurrentContext()->Windows)
             if (std::string_view(window->Name).find("DiagnosticLog") != std::string_view::npos)
@@ -189,7 +223,7 @@ void test_layout_cache_and_culling() {
     }
     require(child && child->DrawList->VtxBuffer.Size < 10000,
             "Diagnostic list rendered all offscreen lines");
-    require(child->ScrollMax.x > 0 && log.size() == 1000,
+    require(child->ScrollMax.x > 0 && app.log.size() == 1000,
             "Virtualized diagnostics lost horizontal scrolling or history");
     ImGui::DestroyContext();
 }
@@ -210,12 +244,22 @@ void benchmark(const char* path) {
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
     io.Fonts->AddFontFromMemoryCompressedTTF(
         static_cast<const void*>(&dejavu), dejavuSize, 15.0f);
-    canvas_state() = CanvasState{};
-    const auto frame = [](std::optional<dot_layout::DirectedGraph> input = std::nullopt) {
+    auto& app = test_app();
+    app.canvas = CanvasState{};
+    app.canvas.asynchronous = false;
+    app.settings = UserSettings{};
+    const auto frame = [&app](
+                           std::optional<dot_layout::DirectedGraph> input = std::nullopt) {
         ImGui::NewFrame();
         ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(900, 600), ImGuiCond_Always);
-        render_graph(std::move(input));
+        if (input) {
+            app.canvas.graph = std::move(*input);
+            app.canvas.layout.reset();
+            app.canvas.dirty = true;
+            app.canvas.recently_replaced = true;
+        }
+        render_graph_window(app);
         ImGui::Render();
     };
     frame(*graph);
@@ -226,7 +270,7 @@ void benchmark(const char* path) {
     const double cached_ms = 1000.0 * (std::clock() - start) / CLOCKS_PER_SEC / frames;
     start = std::clock();
     for (int i = 0; i < frames; ++i) {
-        canvas_state().dirty = true;
+        app.canvas.dirty = true;
         frame();
     }
     const double relayout_ms = 1000.0 * (std::clock() - start) / CLOCKS_PER_SEC / frames;

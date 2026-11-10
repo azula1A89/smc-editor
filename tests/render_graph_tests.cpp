@@ -1,10 +1,28 @@
-#define main dot_layout_demo_main
-#include "../src/main.cpp"
-#undef main
-
 #include <cstdint>
+#include <cmath>
+#include <iostream>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <utility>
+
+#include <imgui.h>
+#include <imgui_internal.h>
+
+#include <dejavu.h>
+
+#include <app_context.hpp>
+#include <analysis.hpp>
+#include <ui_windows.hpp>
 
 namespace {
+
+AppContext& test_app() {
+    static AppContext app;
+    app.canvas.asynchronous = false;
+    return app;
+}
+
 
 void require(bool condition, const char* message) {
     if (!condition)
@@ -14,6 +32,14 @@ void require(bool condition, const char* message) {
 void frame(float x, float y, std::optional<bool> mouse = std::nullopt,
            std::optional<dot_layout::DirectedGraph> graph = std::nullopt,
            std::optional<GraphFocus> focus = std::nullopt) {
+    auto& app = test_app();
+    if (graph) {
+        app.canvas.graph = std::move(*graph);
+        app.canvas.layout.reset();
+        app.canvas.dirty = true;
+        app.canvas.recently_replaced = true;
+    }
+    app.focus = std::move(focus);
     ImGuiIO& io = ImGui::GetIO();
     io.AddMousePosEvent(x, y);
     if (mouse)
@@ -21,7 +47,7 @@ void frame(float x, float y, std::optional<bool> mouse = std::nullopt,
     ImGui::NewFrame();
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(900, 600), ImGuiCond_Always);
-    render_graph(std::move(graph), nullptr, std::move(focus));
+    render_graph_window(app);
     ImGui::Render();
 }
 
