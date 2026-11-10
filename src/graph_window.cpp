@@ -472,7 +472,7 @@ void render_graph_window(AppContext& app) {
                 draw_list->AddEllipseFilled(ImVec2(x, y), ImVec2(width * 0.5f, height * 0.5f), node_col);
                 if (highlighted)
                     draw_list->AddEllipse(ImVec2(x, y),
-                        ImVec2(width * 0.5f, height * 0.5f), focus_col, 0, 3.0f);
+                        ImVec2(width * 0.5f, height * 0.5f), focus_col, 0, 0, 3.0f);
             }
             if (node.shape != dot_layout::NodeShape::Point &&
                 visible_rect(label_pos, ImVec2(label_pos.x + label_size.x, label_pos.y + label_size.y), 4.0f))
