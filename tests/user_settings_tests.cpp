@@ -7,6 +7,7 @@
 #include <imgui.h>
 
 #include <user_settings.hpp>
+#include <log.hpp>
 
 namespace {
 
@@ -103,11 +104,36 @@ void testSettingsRoundTrip() {
     std::filesystem::remove(path);
 }
 
+void testInvalidSettingsAreLogged() {
+    const auto path = std::filesystem::temp_directory_path() /
+        ("dot_static_invalid_settings_" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".ini");
+    {
+        std::ofstream file(path);
+        file << "[UserSettings][Data]\nwindow_width=invalid\n";
+    }
+    {
+        ImGuiContextGuard context;
+        const auto path_string = path.string();
+        context.io().IniFilename = path_string.c_str();
+        DiagnosticLog log(10, false);
+        UserSettings settings;
+        settings.initialize(&log);
+        const auto records = log.snapshot().records;
+        require(records.size() == 1 && records[0].level == LogLevel::warning &&
+                    records[0].source == "Settings" &&
+                    records[0].detail.find("window_width") != std::string::npos,
+                "Invalid settings were not logged");
+    }
+    std::filesystem::remove(path);
+}
+
 } // namespace
 
 int main() {
     try {
         testSettingsRoundTrip();
+        testInvalidSettingsAreLogged();
     } catch (const std::exception& error) {
         std::cerr << "user_settings_tests: " << error.what() << '\n';
         return 1;

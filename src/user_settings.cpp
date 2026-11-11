@@ -1,7 +1,6 @@
 #include <charconv>
 #include <cmath>
 #include <cstdlib>
-#include <iostream>
 #include <string_view>
 #include <utility>
 
@@ -9,6 +8,7 @@
 #include <imgui_internal.h>
 
 #include <user_settings.hpp>
+#include <log.hpp>
 
 namespace {
 
@@ -97,10 +97,6 @@ std::uint64_t fingerprint(const dot_layout::DirectedGraph& graph) {
             add_string(node);
     }
     return value;
-}
-
-void report_invalid(const std::string& key) {
-    std::cerr << "Ignoring invalid UserSettings entry '" << key << "'\n";
 }
 
 } // namespace
@@ -194,7 +190,8 @@ void UserSettings::read_line_func(
     }
 
     if (!valid)
-        report_invalid(std::string(key));
+        write_log(settings.log_, LogLevel::warning, "Settings",
+                  "Ignoring invalid UserSettings entry '" + std::string(key) + "'");
 }
 
 void UserSettings::write_all_func(
@@ -224,7 +221,8 @@ void UserSettings::write_all_func(
     buffer->append("\n\n");
 }
 
-void UserSettings::initialize() {
+void UserSettings::initialize(DiagnosticLog* log) {
+    log_ = log;
     ImGuiSettingsHandler handler{};
     handler.TypeName = "UserSettings";
     handler.TypeHash = ImHashStr(handler.TypeName);

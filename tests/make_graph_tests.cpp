@@ -54,8 +54,12 @@ void testConversion() {
 
     DiagnosticLog diagnostics;
     require(!make_graph_from_contents("%unknown\n", "editor.sm", &diagnostics) &&
-                !diagnostics.empty(),
+                !diagnostics.snapshot().records.empty(),
             "Editor parse diagnostics were not reported");
+    const auto records = diagnostics.snapshot().records;
+    require(records[0].level == LogLevel::error && records[0].source == "SMC" &&
+                records[0].detail.find("editor.sm:") != std::string::npos,
+            "Parser diagnostic metadata or location was lost");
     require(graph->clusters.size() == 2 && graph->nodes.size() == 6 &&
                 graph->edges.size() == 9, "Unexpected graph size");
     require(graph->clusters[0].label == "Main" && graph->clusters[1].label == "Other",

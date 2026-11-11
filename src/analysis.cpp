@@ -1,8 +1,8 @@
 #include <algorithm>
 #include <exception>
 #include <fstream>
-#include <iostream>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -15,25 +15,14 @@
 #include <smc/parser.hpp>
 #include <smc/syntax_checker.hpp>
 
-namespace {
-
-thread_local bool defer_log_output = false;
-
-} // namespace
-
-void append_log(DiagnosticLog* log, std::string message) {
-    if (!defer_log_output)
-        std::cerr << message << '\n';
-    if (log)
-        log->push_back(std::move(message));
-}
-
 void print_diagnostics(const smc::Diagnostics& diagnostics, DiagnosticLog* log) {
     for (const auto& diagnostic : diagnostics) {
         const char* severity = diagnostic.severity == smc::DiagnosticSeverity::error
                                    ? "error"
                                    : "warning";
-        append_log(log, diagnostic.location.file + ':' +
+        write_log(log, diagnostic.severity == smc::DiagnosticSeverity::error
+                           ? LogLevel::error : LogLevel::warning, "SMC",
+            diagnostic.location.file + ':' +
             std::to_string(diagnostic.location.line) + ':' +
             std::to_string(diagnostic.location.column) + ": " + severity + ": " +
             diagnostic.message);
@@ -43,13 +32,13 @@ void print_diagnostics(const smc::Diagnostics& diagnostics, DiagnosticLog* log) 
 std::optional<std::string> read_input_file(const std::string& input_file, DiagnosticLog* log) {
     std::ifstream input(input_file, std::ios::binary);
     if (!input) {
-        append_log(log, "smc_cpp: cannot open input file '" + input_file + "'");
+        write_log(log, LogLevel::error, "File", "smc_cpp: cannot open input file '" + input_file + "'");
         return std::nullopt;
     }
     const std::string contents((std::istreambuf_iterator<char>(input)),
                                std::istreambuf_iterator<char>());
     if (input.bad()) {
-        append_log(log, "smc_cpp: failed while reading input file '" + input_file + "'");
+        write_log(log, LogLevel::error, "File", "smc_cpp: failed while reading input file '" + input_file + "'");
         return std::nullopt;
     }
     return contents;
@@ -160,7 +149,7 @@ public:
         for (const auto& state : map.states)
             state.accept(*this);
         if (map.states.empty()) {
-            append_log(log_, source_name_ + ": state map '" + map.name +
+            write_log(log_, LogLevel::error, "SMC", source_name_ + ": state map '" + map.name +
                 "' has no states; cannot lay out an empty cluster");
             failed_ = true;
         }
@@ -216,7 +205,7 @@ public:
             if (destination != "nil") {
                 const auto resolved = resolve_state(destination, current_map_->name);
                 if (!resolved) {
-                    append_log(log_, source_name_ +
+                    write_log(log_, LogLevel::error, "SMC", source_name_ +
                         ": cannot resolve destination '" + destination +
                         "' in map '" + current_map_->name + "'");
                     failed_ = true;
@@ -396,7 +385,6 @@ std::optional<AnalysisResult> AnalysisWorker::take_result() {
 }
 
 void AnalysisWorker::run() {
-    defer_log_output = true;
     for (;;) {
         std::optional<AnalysisJob> job;
         {
@@ -409,10 +397,12 @@ void AnalysisWorker::run() {
         }
 
         AnalysisResult result{job->revision, job->source.has_value()};
+        // Stage every diagnostic until the revision is accepted or discarded.
+        DiagnosticLog diagnostics(std::numeric_limits<std::size_t>::max(), false);
         try {
             result.graph = job->source
                 ? make_graph_from_contents(*job->source, job->source_name,
-                                           &result.diagnostics, &result.source_segments)
+                                           &diagnostics, &result.source_segments)
                 : std::optional<dot_layout::DirectedGraph>(std::move(job->graph));
             if (result.graph) {
                 apply_graph_preferences(*result.graph, job->graph_preferences);
@@ -428,9 +418,10 @@ void AnalysisWorker::run() {
         } catch (const std::exception& error) {
             result.graph.reset();
             result.layout.reset();
-            result.diagnostics.push_back(
-                std::string("SMC analysis or layout failed: ") + error.what());
+            diagnostics.write(LogLevel::error, "Analysis",
+                              std::string("SMC analysis or layout failed: ") + error.what());
         }
+        result.diagnostics = std::move(diagnostics.snapshot().records);
         {
             std::lock_guard lock(mutex_);
             result_ = std::move(result);
@@ -466,8 +457,8 @@ void AnalysisCoordinator::accept(
         active_revision_.reset();
     if (result.revision != revision_)
         return;
-    for (auto& message : result.diagnostics)
-        append_log(&log, std::move(message));
+    for (auto& record : result.diagnostics)
+        log.publish(std::move(record));
     if (result.graph && result.layout) {
         canvas.graph = std::move(*result.graph);
         canvas.layout = std::move(*result.layout);
@@ -476,12 +467,12 @@ void AnalysisCoordinator::accept(
             source_segments_ = std::move(result.source_segments);
             source_is_indexed_ = true;
             source_needs_analysis_ = false;
-            append_log(&log, "SMC analysis succeeded; graph and DOT layout updated.");
+            log.write(LogLevel::info, "Analysis", "SMC analysis succeeded; graph and DOT layout updated.");
         }
     } else {
         if (result.source_job) {
             source_needs_analysis_ = false;
-            append_log(&log, "SMC analysis failed; retaining the last valid graph.");
+            log.write(LogLevel::error, "Analysis", "SMC analysis failed; retaining the last valid graph.");
         }
         canvas.dirty = result.source_job;
     }

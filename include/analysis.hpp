@@ -29,7 +29,7 @@ struct AnalysisResult {
     std::optional<dot_layout::DirectedGraph> graph;
     std::optional<dot_layout::LayoutResult> layout;
     std::vector<SourceSegment> source_segments;
-    DiagnosticLog diagnostics;
+    std::vector<LogRecord> diagnostics;
 };
 
 class AnalysisWorker {
@@ -94,4 +94,3 @@ std::size_t editor_offset_at_position(
     std::string_view contents, const std::vector<std::size_t>& line_offsets,
     TextEditor::DocPos position);
 std::vector<std::size_t> source_line_offsets(std::string_view contents);
-void append_log(DiagnosticLog* log, std::string message);

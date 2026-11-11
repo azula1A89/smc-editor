@@ -89,7 +89,8 @@ void drag_positive_value(const char* label, float& value, float speed, Diagnosti
         if (std::isfinite(edited) && edited > 0.0f) {
             value = edited;
         } else {
-            append_log(log, std::string(label) + " must be positive and finite");
+            write_log(log, LogLevel::warning, "Canvas",
+                      std::string(label) + " must be positive and finite");
         }
     }
 }

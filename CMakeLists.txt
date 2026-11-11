@@ -19,6 +19,10 @@ target_include_directories(dot_layout PUBLIC include)
 target_link_libraries(dot_layout PRIVATE graphviz_dot_static)
 add_dependencies(dot_layout graphviz_static_build)
 
+add_library(app_log STATIC src/log.cpp)
+target_include_directories(app_log PUBLIC include)
+target_link_libraries(app_log PUBLIC Threads::Threads)
+
 add_library(app_ui STATIC
   src/app_context.cpp
   src/user_settings.cpp
@@ -29,13 +33,16 @@ add_library(app_ui STATIC
   src/log_window.cpp
 )
 target_include_directories(app_ui PUBLIC include)
-target_link_libraries(app_ui PUBLIC dot_layout imgui glew_s smc_core Threads::Threads)
+target_link_libraries(app_ui PUBLIC app_log dot_layout imgui glew_s smc_core Threads::Threads)
 
 add_executable(dot_layout_demo src/main.cpp src/application.cpp)
 target_link_libraries(dot_layout_demo PRIVATE app_ui)
 
 if(BUILD_TESTING)
   add_test(NAME dot_layout_demo_runs COMMAND dot_layout_demo)
+  add_executable(log_tests tests/log_tests.cpp)
+  target_link_libraries(log_tests PRIVATE app_log)
+  add_test(NAME log_tests COMMAND log_tests)
   add_executable(dot_layout_tests tests/dot_layout_tests.cpp)
   target_link_libraries(dot_layout_tests PRIVATE dot_layout)
   add_test(NAME dot_layout_tests COMMAND dot_layout_tests)
@@ -56,7 +63,7 @@ if(BUILD_TESTING)
   target_include_directories(smc_editor_language_tests PRIVATE include)
   add_test(NAME smc_editor_language_tests COMMAND smc_editor_language_tests)
   add_executable(user_settings_tests tests/user_settings_tests.cpp src/user_settings.cpp)
-  target_link_libraries(user_settings_tests PRIVATE imgui)
+  target_link_libraries(user_settings_tests PRIVATE imgui app_log)
   target_include_directories(user_settings_tests PRIVATE include)
   add_test(NAME user_settings_tests COMMAND user_settings_tests)
 endif()

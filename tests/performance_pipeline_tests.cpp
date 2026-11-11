@@ -1,5 +1,7 @@
+#include <algorithm>
 #include <ctime>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 
 #include <imgui.h>
@@ -110,12 +112,17 @@ void test_coordinator() {
             "Analysis did not run at debounce deadline");
     coordinator.text_changed(start + 600ms);
     AnalysisResult stale{first->revision, true};
-    stale.diagnostics.push_back("stale diagnostic");
+    stale.diagnostics.push_back({std::chrono::system_clock::now(), LogLevel::error,
+                                 "SMC", "stale diagnostic"});
     stale.graph = dot_layout::DirectedGraph{};
     stale.layout = dot_layout::LayoutResult{};
+    std::ostringstream stale_output;
+    auto* previous_stderr = std::cerr.rdbuf(stale_output.rdbuf());
     coordinator.accept(std::move(stale), canvas, log);
-    require(log.empty() && !coordinator.source_is_indexed() && !canvas.graph.empty(),
+    std::cerr.rdbuf(previous_stderr);
+    require(log.snapshot().records.empty() && !coordinator.source_is_indexed() && !canvas.graph.empty(),
             "Stale analysis replaced the current graph or logged diagnostics");
+    require(stale_output.str().empty(), "Stale diagnostic reached standard error");
     require(!coordinator.next_job(start + 1099ms, "b", "test.sm", canvas),
             "A later edit did not reset the debounce deadline");
     auto second = coordinator.next_job(start + 1100ms, "b", "test.sm", canvas);
@@ -141,10 +148,11 @@ void test_coordinator() {
     auto invalid_job = coordinator.next_job(start + 1700ms, "bad", "test.sm", canvas);
     require(invalid_job.has_value(), "Invalid input was not scheduled");
     AnalysisResult invalid{invalid_job->revision, true};
-    invalid.diagnostics.push_back("bad input");
+    invalid.diagnostics.push_back({std::chrono::system_clock::now(), LogLevel::error,
+                                   "SMC", "bad input"});
     coordinator.accept(std::move(invalid), canvas, log);
     require(!coordinator.source_is_indexed() && canvas.graph.nodes[0].id == "new" &&
-                canvas.dirty && log.back().find("retaining") != std::string::npos,
+                canvas.dirty && log.snapshot().records.back().detail.find("retaining") != std::string::npos,
             "Invalid input did not retain the last valid graph");
 }
 
@@ -208,8 +216,10 @@ void test_layout_cache_and_culling() {
     require(crossing_vertices > offscreen_vertices,
             "Curve crossing the viewport was incorrectly culled");
 
-    app.log.assign(1000, "diagnostic\nsecond line");
-    app.log.back() = std::string(500, 'x');
+    app.log.clear();
+    for (int i = 0; i < 999; ++i)
+        app.log.write(LogLevel::info, "Test", "diagnostic\nsecond line");
+    app.log.write(LogLevel::warning, "Test", std::string(500, 'x'));
     ImGuiWindow* child = nullptr;
     for (int i = 0; i < 2; ++i) {
         ImGui::NewFrame();
@@ -223,8 +233,75 @@ void test_layout_cache_and_culling() {
     }
     require(child && child->DrawList->VtxBuffer.Size < 10000,
             "Diagnostic list rendered all offscreen lines");
-    require(child->ScrollMax.x > 0 && app.log.size() == 1000,
+    require(child->ScrollMax.x > 0 && app.log.snapshot().records.size() == 1000,
             "Virtualized diagnostics lost horizontal scrolling or history");
+
+    const auto log_frame = [&] {
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_Always);
+        render_log_window(app);
+        ImGui::Render();
+    };
+    app.log.clear();
+    app.log.write(LogLevel::error, "Parser", "first\nsecond");
+    app.log.write(LogLevel::warning, "File", "file warning");
+    app.log.write(LogLevel::info, "Parser", "info");
+    log_frame();
+    require(app.diagnostic_view.lines.size() == 4 &&
+                app.diagnostic_view.lines[0].text.find("[Error] [Parser] first") != std::string::npos &&
+                app.diagnostic_view.lines[1].text == "second" &&
+                app.diagnostic_view.lines[0].level == LogLevel::error,
+            "Structured or multiline log rendering is incorrect");
+    app.diagnostic_view.levels[static_cast<int>(LogLevel::info)] = false;
+    std::copy_n("Parser", 7, app.diagnostic_view.source_filter);
+    log_frame();
+    require(app.diagnostic_view.lines.size() == 2 &&
+                app.diagnostic_view.lines[0].text.find("first") != std::string::npos,
+            "Combined level and source filtering failed");
+    app.log.clear();
+    log_frame();
+    require(app.diagnostic_view.lines.empty(), "Clear retained cached lines");
+    std::ostringstream log_output;
+    auto* previous_stderr = std::cerr.rdbuf(log_output.rdbuf());
+    for (std::size_t i = 0; i < DiagnosticLog::default_capacity; ++i)
+        app.log.write(LogLevel::error, "Parser", std::to_string(i));
+    log_frame();
+    app.log.write(LogLevel::error, "Parser", "newest");
+    std::cerr.rdbuf(previous_stderr);
+    log_frame();
+    require(app.diagnostic_view.lines.size() == DiagnosticLog::default_capacity &&
+                app.diagnostic_view.lines.front().text.ends_with(" 1") &&
+                app.diagnostic_view.lines.back().text.ends_with(" newest"),
+            "Capacity eviction did not invalidate the visible log cache");
+    app.log.clear();
+    app.diagnostic_view.source_filter[0] = '\0';
+    app.diagnostic_view.levels[static_cast<int>(LogLevel::info)] = true;
+    app.log.write(LogLevel::debug, "Test", "debug");
+    app.log.write(LogLevel::info, "Test", "info");
+    app.log.write(LogLevel::warning, "Test", "warning");
+    app.log.write(LogLevel::error, "Test", "error");
+    log_frame();
+    log_frame();
+    for (std::size_t level = 0; level < 4; ++level) {
+        app.diagnostic_view.levels[level] = false;
+        log_frame();
+        require(app.diagnostic_view.lines.size() == 3,
+                "A log level filter did not hide its records");
+        app.diagnostic_view.levels[level] = true;
+    }
+    log_frame();
+    const ImU32 colors[] = {
+        ImGui::ColorConvertFloat4ToU32(ImVec4(0.65f, 0.65f, 0.65f, 1.0f)),
+        ImGui::ColorConvertFloat4ToU32(ImVec4(0.70f, 0.85f, 1.0f, 1.0f)),
+        ImGui::ColorConvertFloat4ToU32(ImVec4(1.0f, 0.78f, 0.30f, 1.0f)),
+        ImGui::ColorConvertFloat4ToU32(ImVec4(1.0f, 0.38f, 0.38f, 1.0f))};
+    for (const auto color : colors) {
+        bool found = false;
+        for (const auto& vertex : child->DrawList->VtxBuffer)
+            found |= vertex.col == color;
+        require(found, "Log level color was not rendered");
+    }
     ImGui::DestroyContext();
 }
 

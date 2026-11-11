@@ -10,6 +10,7 @@
 
 struct ImGuiSettingsHandler;
 struct ImGuiTextBuffer;
+class DiagnosticLog;
 
 struct GraphPreferences {
     std::uint64_t fingerprint = 0;
@@ -35,12 +36,13 @@ public:
     float size_height = 6.0f;
     GraphPreferences graph_preferences;
 
-    void initialize();
+    void initialize(DiagnosticLog* log = nullptr);
     void sync() const;
     void capture_graph(const dot_layout::DirectedGraph& graph);
     void apply_graph_preferences(dot_layout::DirectedGraph& graph) const;
 
 private:
+    DiagnosticLog* log_ = nullptr;
     static void* read_open_func(
         ImGuiContext* context, ImGuiSettingsHandler* handler, const char* name);
     static void read_line_func(

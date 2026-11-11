@@ -10,14 +10,13 @@
 #include <imgui.h>
 
 #include <dot_layout.hpp>
+#include <log.hpp>
 #include <user_settings.hpp>
 
 class TextEditor;
 class TrieAutoComplete;
 class AnalysisWorker;
 class AnalysisCoordinator;
-
-using DiagnosticLog = std::vector<std::string>;
 
 enum class GraphObjectKind { state_map, state, transition, guard };
 
@@ -35,14 +34,18 @@ struct GraphFocus {
 
 struct DiagnosticViewState {
     struct Line {
-        std::size_t message;
-        std::size_t begin;
-        std::size_t end;
+        std::string text;
+        LogLevel level;
     };
 
-    const DiagnosticLog* measured_log = nullptr;
-    std::size_t measured_count = 0;
+    std::uint64_t version = 0;
+    bool initialized = false;
+    std::vector<LogRecord> records;
     std::vector<Line> lines;
+    bool levels[4] = {true, true, true, true};
+    char source_filter[256] = {};
+    bool measured_levels[4] = {true, true, true, true};
+    std::string measured_source_filter;
     ImFont* measured_font = nullptr;
     float measured_font_size = 0.0f;
     float max_width = 0.0f;

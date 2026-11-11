@@ -15,7 +15,7 @@ AppContext::AppContext() = default;
 AppContext::~AppContext() = default;
 
 void AppContext::initialize(std::string source_file) {
-    settings.initialize();
+    settings.initialize(&log);
 
     input_file = std::move(source_file);
     editor = std::make_unique<TextEditor>();
@@ -28,7 +28,8 @@ void AppContext::initialize(std::string source_file) {
     if (contents)
         editor->SetText(*contents);
     else
-        append_log(&log, "Displaying the built-in example graph until valid SMC is available.");
+        log.write(LogLevel::warning, "Application",
+                  "Displaying the built-in example graph until valid SMC is available.");
 
     editor_text = editor->GetText();
     line_offsets = source_line_offsets(editor_text);
