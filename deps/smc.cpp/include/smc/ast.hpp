@@ -18,6 +18,7 @@ struct Guard {
     std::string transition_type{"set"};
     std::string actions;
     SourceLocation location;
+    SourceLocation end_location;
 
     void accept(Generator& generator) const;
 };
@@ -27,6 +28,7 @@ struct Transition {
     std::string parameters;
     std::vector<Guard> guards;
     SourceLocation location;
+    SourceLocation end_location;
 
     void accept(Generator& generator) const;
 };
@@ -37,6 +39,7 @@ struct State {
     std::optional<std::string> exit_actions;
     std::vector<Transition> transitions;
     SourceLocation location;
+    SourceLocation end_location;
 
     void accept(Generator& generator) const;
 };
@@ -45,6 +48,7 @@ struct StateMap {
     std::string name;
     std::vector<State> states;
     SourceLocation location;
+    SourceLocation end_location;
 
     void accept(Generator& generator) const;
 };
@@ -64,6 +68,7 @@ struct Fsm {
     std::vector<std::string> declarations;
     std::vector<StateMap> maps;
     SourceLocation location;
+    SourceLocation end_location;
 
     void accept(Generator& generator) const;
 };

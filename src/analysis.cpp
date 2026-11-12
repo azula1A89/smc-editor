@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <queue>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -119,26 +120,59 @@ public:
 
         std::sort(located_foci_.begin(), located_foci_.end(),
             [](const LocatedFocus& left, const LocatedFocus& right) {
-                if (left.offset != right.offset)
-                    return left.offset < right.offset;
-                return focus_priority(left.kind) > focus_priority(right.kind);
+                if (left.begin != right.begin)
+                    return left.begin < right.begin;
+                if (left.depth != right.depth)
+                    return left.depth < right.depth;
+                return left.end > right.end;
             });
+        std::vector<std::size_t> boundaries;
+        boundaries.reserve(located_foci_.size() * 2);
+        for (const auto& focus : located_foci_) {
+            boundaries.push_back(focus.begin);
+            boundaries.push_back(focus.end);
+        }
+        std::sort(boundaries.begin(), boundaries.end());
+        boundaries.erase(std::unique(boundaries.begin(), boundaries.end()),
+                         boundaries.end());
+
+        const auto lower_priority = [this](std::size_t left_index,
+                                           std::size_t right_index) {
+            const auto& left = located_foci_[left_index];
+            const auto& right = located_foci_[right_index];
+            if (left.depth != right.depth)
+                return left.depth < right.depth;
+            const int left_priority = focus_priority(left.kind);
+            const int right_priority = focus_priority(right.kind);
+            if (left_priority != right_priority)
+                return left_priority < right_priority;
+            return left_index < right_index;
+        };
+        std::priority_queue<std::size_t, std::vector<std::size_t>,
+                            decltype(lower_priority)> active(lower_priority);
         std::vector<SourceSegment> resolved_segments;
-        for (std::size_t index = 0; index < located_foci_.size();) {
-            const auto& focus = located_foci_[index];
-            std::size_t next = index + 1;
-            while (next < located_foci_.size() &&
-                   located_foci_[next].offset == focus.offset) {
-                ++next;
+        std::size_t next_focus = 0;
+        for (std::size_t index = 0; index + 1 < boundaries.size(); ++index) {
+            const std::size_t begin = boundaries[index];
+            const std::size_t end = boundaries[index + 1];
+            while (next_focus < located_foci_.size() &&
+                   located_foci_[next_focus].begin <= begin) {
+                active.push(next_focus++);
             }
-            const std::size_t end = next < located_foci_.size()
-                ? located_foci_[next].offset : contents_.size();
-            if (focus.offset < end ||
-                (focus.offset == contents_.size() && resolved_segments.empty())) {
+            while (!active.empty() && located_foci_[active.top()].end <= begin)
+                active.pop();
+            if (begin == end || active.empty())
+                continue;
+
+            const auto& focus = located_foci_[active.top()];
+            if (!resolved_segments.empty() && resolved_segments.back().end == begin &&
+                resolved_segments.back().kind == focus.kind &&
+                resolved_segments.back().graph_indices == focus.graph_indices) {
+                resolved_segments.back().end = end;
+            } else {
                 resolved_segments.push_back(
-                    {focus.offset, end, focus.kind, focus.graph_indices});
+                    {begin, end, focus.kind, focus.graph_indices});
             }
-            index = next;
         }
         if (resolved_segments.empty()) {
             write_log(log_, LogLevel::debug, "Analysis",
@@ -176,7 +210,8 @@ public:
         current_map_ = &map;
         const auto cluster_index = graph_.clusters.size();
         graph_.clusters.push_back({map.name, map.name, {}, std::nullopt});
-        add_focus(map.location, GraphObjectKind::state_map, {cluster_index});
+        add_focus(map.location, map.end_location, GraphObjectKind::state_map,
+                  {cluster_index}, 0);
         for (const auto& state : map.states)
             state.accept(*this);
         if (map.states.empty()) {
@@ -196,10 +231,8 @@ public:
             current_map_->name + "::" + state.name == fsm_->start_state
                 ? dot_layout::NodeShape::Ellipse : dot_layout::NodeShape::Box});
         graph_.clusters.back().nodes.push_back(id);
-        if (state.location.line != current_map_->location.line ||
-            state.location.column != current_map_->location.column) {
-            add_focus(state.location, GraphObjectKind::state, {node_index});
-        }
+        add_focus(state.location, state.end_location, GraphObjectKind::state,
+                  {node_index}, 1);
 
         current_state_id_ = id;
         for (const auto& transition : state.transitions)
@@ -220,8 +253,8 @@ public:
             transition_edges.push_back(edge_index);
         }
         if (!transition_edges.empty())
-            add_focus(transition.location, GraphObjectKind::transition,
-                      std::move(transition_edges));
+            add_focus(transition.location, transition.end_location,
+                      GraphObjectKind::transition, std::move(transition_edges), 2);
     }
 
     void visit(const smc::Guard& guard) override {
@@ -259,21 +292,29 @@ public:
         if (!guard.actions.empty())
             label += " {" + guard.actions + "}";
         graph_.edges.push_back({current_state_id_, target, std::move(label)});
-        add_focus(guard.location, GraphObjectKind::guard, {edge_index});
+        add_focus(guard.location, guard.end_location, GraphObjectKind::guard,
+                  {edge_index}, 3);
     }
 
 private:
     struct LocatedFocus {
-        std::size_t offset;
+        std::size_t begin;
+        std::size_t end;
+        int depth;
         GraphObjectKind kind;
         std::vector<std::size_t> graph_indices;
     };
 
-    void add_focus(const smc::SourceLocation& location, GraphObjectKind kind,
-                   std::vector<std::size_t> indices) {
-        located_foci_.push_back({
-            source_offset_at_location(contents_, line_offsets_, location),
-            kind, std::move(indices)});
+    void add_focus(const smc::SourceLocation& location,
+                   const smc::SourceLocation& end_location, GraphObjectKind kind,
+                   std::vector<std::size_t> indices, int depth) {
+        const std::size_t begin =
+            source_offset_at_location(contents_, line_offsets_, location);
+        const std::size_t end =
+            source_offset_at_location(contents_, line_offsets_, end_location);
+        if (begin < end)
+            located_foci_.push_back(
+                {begin, end, depth, kind, std::move(indices)});
     }
 
     std::optional<std::string> resolve_state(

@@ -35,6 +35,7 @@ struct Token {
     TokenKind kind{TokenKind::end};
     std::string text;
     SourceLocation location;
+    SourceLocation end_location;
 };
 
 class Lexer {
@@ -44,6 +45,7 @@ public:
     Token next();
     std::string read_raw_line();
     std::string read_balanced_block(char open, char close, SourceLocation location);
+    SourceLocation current_location() const;
 
 private:
     char current() const;

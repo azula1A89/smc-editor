@@ -426,7 +426,8 @@ StateMap Parser::parse_map(const Token& directive) {
         }
         map.states.push_back(parse_state(map));
     }
-    expect(TokenKind::double_percent, "'%%' to end the map");
+    const Token end = expect(TokenKind::double_percent, "'%%' to end the map");
+    map.end_location = end.end_location;
     const bool has_default = std::any_of(map.states.begin(), map.states.end(),
                                          [](const State& state) {
                                              return state.name == "Default";
@@ -435,6 +436,7 @@ StateMap Parser::parse_map(const Token& directive) {
         State default_state;
         default_state.name = "Default";
         default_state.location = map.location;
+        default_state.end_location = map.location;
         map.states.push_back(std::move(default_state));
     }
     return map;
@@ -479,7 +481,8 @@ State Parser::parse_state(const StateMap&) {
         }
         state.transitions.push_back(parse_transition());
     }
-    expect(TokenKind::right_brace, "'}' to end the state");
+    const Token end = expect(TokenKind::right_brace, "'}' to end the state");
+    state.end_location = end.end_location;
     return state;
 }
 
@@ -503,6 +506,7 @@ Transition Parser::parse_transition() {
     do {
         transition.guards.push_back(parse_guard());
     } while (peek().kind == TokenKind::left_bracket);
+    transition.end_location = transition.guards.back().end_location;
     return transition;
 }
 
@@ -556,6 +560,7 @@ Guard Parser::parse_guard() {
     if (const auto error = validate_action_body(guard.actions)) {
         fail(opening, *error);
     }
+    guard.end_location = lexer_.current_location();
     return guard;
 }
 
@@ -600,6 +605,7 @@ std::optional<Fsm> Parser::parse() {
         return std::nullopt;
     }
 
+    fsm.end_location = peek().end_location;
     if (std::any_of(diagnostics_.begin(), diagnostics_.end(),
                     [](const Diagnostic& diagnostic) {
                         return diagnostic.severity == DiagnosticSeverity::error;

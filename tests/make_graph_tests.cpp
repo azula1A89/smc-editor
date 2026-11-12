@@ -140,11 +140,55 @@ void testConversion() {
             "Focused guard did not resolve to its graph edge label");
 }
 
+void test_source_segment_parent_fallback() {
+    const std::string contents =
+        "%start Main::state_x\n"
+        "%class Context\n"
+        "%header context.h\n"
+        "%map Main\n"
+        "%%\n"
+        "state_x\n"
+        "{\n"
+        "    transition_xy state_y{}\n"
+        "}\n"
+        "\n"
+        "state_y\n"
+        "{\n"
+        "}\n"
+        "%%\n";
+    std::vector<SourceSegment> source_segments;
+    require(make_graph_from_contents(contents, "segments.sm", nullptr, &source_segments)
+                .has_value(),
+            "Nested source segment fixture did not produce a graph");
+
+    const auto transition_offset = contents.find("transition_xy");
+    const auto transition_focus = focus_at_offset(source_segments, transition_offset);
+    require(transition_focus &&
+                transition_focus->kind == GraphObjectKind::transition,
+            "Transition token did not map to the transition");
+
+    const auto state_close = contents.find("}\n\nstate_y");
+    require(state_close != std::string::npos, "State closing brace not found");
+    const auto closing_brace_focus = focus_at_offset(source_segments, state_close);
+    require(closing_brace_focus &&
+                closing_brace_focus->kind == GraphObjectKind::state &&
+                closing_brace_focus->graph_indices == std::vector<std::size_t>{0},
+            "State closing brace did not map to its state");
+
+    const auto blank_line_offset = state_close + 2;
+    const auto blank_line_focus = focus_at_offset(source_segments, blank_line_offset);
+    require(blank_line_focus &&
+                blank_line_focus->kind == GraphObjectKind::state_map &&
+                blank_line_focus->graph_indices == std::vector<std::size_t>{0},
+            "Blank line between states did not fall back to the state map");
+}
+
 } // namespace
 
 int main() {
     try {
         testConversion();
+        test_source_segment_parent_fallback();
         require(!make_graph(std::string(TEST_SOURCE_DIR) + "/tests/no-such-file.sm"),
                 "Missing file accepted");
         require(!make_graph(std::string(TEST_SOURCE_DIR) + "/deps/smc.cpp/tests/invalid.sm"),

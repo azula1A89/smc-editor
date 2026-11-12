@@ -56,7 +56,11 @@ bool Lexer::at_end() const {
 }
 
 Token Lexer::token(TokenKind kind, std::string text, SourceLocation location) const {
-    return Token{kind, std::move(text), std::move(location)};
+    return Token{kind, std::move(text), std::move(location), current_location()};
+}
+
+SourceLocation Lexer::current_location() const {
+    return SourceLocation{filename_, line_, column_};
 }
 
 void Lexer::report(SourceLocation location, std::string message) {

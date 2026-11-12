@@ -44,6 +44,53 @@ void test_lexer_preserves_source_and_comments() {
     assert(diagnostics.empty());
 }
 
+void test_token_and_ast_end_locations() {
+    smc::Diagnostics token_diagnostics;
+    smc::Lexer lexer("word{}", "positions.sm", token_diagnostics);
+    const auto word = lexer.next();
+    const auto open = lexer.next();
+    const auto close = lexer.next();
+    assert(word.location.column == 1 && word.end_location.column == 5);
+    assert(open.location.column == 5 && open.end_location.column == 6);
+    assert(close.location.column == 6 && close.end_location.column == 7);
+    assert(token_diagnostics.empty());
+
+    const std::string source = R"SMC(%start Main::state_x
+%class Context
+%map Main
+%%
+state_x
+{
+    transition_xy state_y{}
+}
+
+state_y
+{
+}
+%%
+)SMC";
+    smc::Diagnostics diagnostics;
+    smc::Parser parser(source, "positions.sm", diagnostics);
+    const auto fsm = parser.parse();
+    assert(fsm.has_value());
+
+    const auto& map = fsm->maps.front();
+    const auto& state = map.states.front();
+    const auto& transition = state.transitions.front();
+    const auto& guard = transition.guards.front();
+    assert(state.location.line == 5 && state.end_location.line == 8 &&
+           state.end_location.column == 2);
+    assert(transition.location.line == 7 &&
+           transition.end_location.line == 7 &&
+           transition.end_location.column ==
+               std::string("    transition_xy state_y{}").size() + 1);
+    assert(guard.location.line == 7 &&
+           guard.end_location.line == transition.end_location.line &&
+           guard.end_location.column == transition.end_location.column);
+    assert(map.end_location.line == 13 && map.end_location.column == 3);
+    assert(diagnostics.empty());
+}
+
 void test_parser_and_semantic_checker() {
     smc::Diagnostics diagnostics;
     smc::Parser parser(valid_source, "valid.sm", diagnostics);
@@ -177,6 +224,7 @@ Ready { reset Root::Idle {} }
 
 int main() {
     test_lexer_preserves_source_and_comments();
+    test_token_and_ast_end_locations();
     test_parser_and_semantic_checker();
     test_checker_reports_missing_destination();
     test_default_state_entry_is_rejected();
