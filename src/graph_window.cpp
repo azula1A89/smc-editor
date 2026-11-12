@@ -308,8 +308,10 @@ void render_graph_window(AppContext& app) {
     canvas.recently_replaced = false;
     
     ImGui::Begin("canvas", NULL, ImGuiWindowFlags_MenuBar);
+    const int channel_count = 4;
+    const int focus_channel = channel_count - 1;
     ImDrawList *draw_list = ImGui::GetWindowDrawList();
-    draw_list->ChannelsSplit(3);
+    draw_list->ChannelsSplit(channel_count);
     ImGuiStyle &style = ImGui::GetStyle();
     if (!canvas.origin_initialized) {
         const ImVec2 initial_origin = ImGui::GetCursorScreenPos();
@@ -583,7 +585,6 @@ void render_graph_window(AppContext& app) {
             canvas.click_started = false;
         }
 
-        draw_list->ChannelsSetCurrent(0);
         for (std::size_t cluster_index = 0;
              cluster_index < layout.clusters.size(); ++cluster_index) {
             const auto& cluster = layout.clusters[cluster_index];
@@ -596,6 +597,8 @@ void render_graph_window(AppContext& app) {
             }();
             const bool highlighted =
                 focus_contains(GraphObjectKind::state_map, cluster_index);
+                
+            draw_list->ChannelsSetCurrent(highlighted?focus_channel:0);
             if (visible_rect(tl, br, 4.0f))
                 draw_list->AddRect(tl, br,
                                    highlighted ? focus_col : line_col,
@@ -615,7 +618,6 @@ void render_graph_window(AppContext& app) {
         }
 
         // Draw nodes
-        draw_list->ChannelsSetCurrent(2);
         for (std::size_t i = 0; i < layout.nodes.size(); ++i) {
             const auto& node = layout.nodes[i];
             const auto& label = graph.nodes[i].label;
@@ -629,6 +631,7 @@ void render_graph_window(AppContext& app) {
             const ImVec2 br(x + width * 0.5f, y + height * 0.5f);
             const bool highlighted = focus_contains(GraphObjectKind::state, i);
             
+            draw_list->ChannelsSetCurrent(highlighted?focus_channel:2);
             if (visible_rect(tl, br, 4.0f) && node.shape == dot_layout::NodeShape::Box) {
                 draw_list->AddRectFilled(tl, br, node_col, 12.0f);
                 if (highlighted)
@@ -653,7 +656,7 @@ void render_graph_window(AppContext& app) {
                 focus_contains(GraphObjectKind::guard, edge_index);
             const auto edge_color = highlighted ? focus_col : line_col;
 
-            draw_list->ChannelsSetCurrent(1);
+            draw_list->ChannelsSetCurrent(highlighted?focus_channel:1);
             for (std::size_t i = 0; i < edge.spline_points.size(); ++i) {
                 if (!visible_spline(edge, i))
                     continue;
@@ -665,7 +668,7 @@ void render_graph_window(AppContext& app) {
                                        highlighted ? 3.0f : 1.0f, settings.arrow_size);
             }
 
-            draw_list->ChannelsSetCurrent(2);
+            draw_list->ChannelsSetCurrent(highlighted?focus_channel:2);
             if (edge.label) {
                 const ImVec2 center = to_screen(edge.label->center);
                 const ImVec2 half_size(edge.label->width * scale * 0.5f,
