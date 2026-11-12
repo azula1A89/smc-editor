@@ -23,6 +23,17 @@ struct AnalysisJob {
     GraphPreferences graph_preferences;
 };
 
+struct AstNodeView {
+    std::string label;
+    SourceSegment source;
+    std::vector<std::size_t> children;
+};
+
+struct AstTreeView {
+    std::vector<AstNodeView> nodes;
+    std::vector<std::size_t> roots;
+};
+
 struct AnalysisResult {
     std::uint64_t revision;
     bool source_job;
@@ -30,6 +41,7 @@ struct AnalysisResult {
     std::optional<dot_layout::LayoutResult> layout;
     std::vector<SourceSegment> source_segments;
     std::vector<SourceSegment> source_ranges;
+    AstTreeView ast;
     std::vector<LogRecord> diagnostics;
 };
 
@@ -65,6 +77,7 @@ public:
     bool source_is_indexed() const;
     const std::vector<SourceSegment>& source_segments() const;
     const std::vector<SourceSegment>& source_ranges() const;
+    const AstTreeView& ast() const;
     void accept(AnalysisResult result, CanvasState& canvas, DiagnosticLog& log);
     std::optional<AnalysisJob> next_job(
         Clock::time_point now, const std::string& source, const std::string& source_name,
@@ -80,6 +93,7 @@ private:
     Clock::time_point deadline_;
     std::vector<SourceSegment> source_segments_;
     std::vector<SourceSegment> source_ranges_;
+    AstTreeView ast_;
 };
 
 std::optional<dot_layout::DirectedGraph> make_graph(
@@ -87,7 +101,8 @@ std::optional<dot_layout::DirectedGraph> make_graph(
 std::optional<dot_layout::DirectedGraph> make_graph_from_contents(
     const std::string& contents, const std::string& source_name, DiagnosticLog* log = nullptr,
     std::vector<SourceSegment>* source_segments = nullptr,
-    std::vector<SourceSegment>* source_ranges = nullptr);
+    std::vector<SourceSegment>* source_ranges = nullptr,
+    AstTreeView* ast = nullptr);
 std::optional<std::string> read_input_file(
     const std::string& input_file, DiagnosticLog* log = nullptr);
 std::optional<GraphFocus> focus_at_offset(

@@ -568,13 +568,8 @@ void render_graph_window(AppContext& app) {
                         app.coordinator->source_is_indexed()) {
                         if (const auto range = source_range_for_focus(
                                 app.coordinator->source_ranges(), *hit)) {
-                            const auto start = editor_position_at_offset(
-                                app.editor_text, app.line_offsets, range->begin);
-                            const auto end = editor_position_at_offset(
-                                app.editor_text, app.line_offsets, range->end);
-                            app.editor->SetCursor(start);
-                            app.editor->SelectRegion(start, end);
-                            app.editor->ScrollToLine(start.line);
+                            select_graph_source(app, *range);
+                            app.focus = *hit;
                         }
                     }
                     if (app.editor) {

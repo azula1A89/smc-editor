@@ -203,6 +203,127 @@ void test_canvas_selection() {
             "Editor cursor movement did not release canvas focus");
 }
 
+void test_ast_menu() {
+    auto& app = test_app();
+    const std::string source =
+        "%start Main::Ready\n%class Context\n%header context.h\n%map Main\n%%\n"
+        "Ready\n{\n    go [x] Done {}\n       [y] Ready {}\n}\nDone\n{\n}\n%%\n";
+    app.editor = std::make_unique<TextEditor>();
+    app.editor->SetText(source);
+    app.editor_text = app.editor->GetText();
+    app.line_offsets = source_line_offsets(app.editor_text);
+    const auto now = AnalysisCoordinator::Clock::now();
+    app.coordinator = std::make_unique<AnalysisCoordinator>(true, now);
+    const auto job = app.coordinator->next_job(now, app.editor_text, "menu.sm", app.canvas);
+    require(job.has_value(), "AST menu analysis was not scheduled");
+    AnalysisResult result{job->revision, true};
+    result.graph = make_graph_from_contents(app.editor_text, "menu.sm", nullptr,
+        &result.source_segments, &result.source_ranges, &result.ast);
+    require(result.graph.has_value(), "AST menu fixture failed to parse");
+    result.layout = dot_layout::DotLayout{}.layout(*result.graph);
+    app.coordinator->accept(std::move(result), app.canvas, app.log);
+    app.canvas.dirty = false;
+    app.canvas_focus.reset();
+    app.canvas.previous_focus.reset();
+
+    const auto editor_frame = [&](float x, float y, std::optional<bool> mouse = std::nullopt) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(x, y);
+        if (mouse)
+            io.AddMouseButtonEvent(0, *mouse);
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(440, 600), ImGuiCond_Always);
+        render_editor_window(app);
+        update_graph_focus(app);
+        ImGui::SetNextWindowPos(ImVec2(440, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(460, 600), ImGuiCond_Always);
+        render_graph_window(app);
+        ImGui::Render();
+    };
+    const auto click_at = [&](ImVec2 p) {
+        editor_frame(p.x, p.y, true);
+        editor_frame(p.x, p.y, false);
+    };
+    editor_frame(800, 500);
+    const auto bar = ImGui::FindWindowByName("SMC Editor")->MenuBarRect();
+    click_at(ImVec2(bar.Min.x + 30.0f, (bar.Min.y + bar.Max.y) * 0.5f));
+    editor_frame(800, 500);
+    auto& popup_stack = ImGui::GetCurrentContext()->OpenPopupStack;
+    require(!popup_stack.empty() && popup_stack[0].Window, "AST Nodes menu did not open");
+    ImGuiWindow* popup = popup_stack[0].Window;
+
+    const auto tree_id = [](ImGuiID seed, std::size_t index) {
+        const int id = static_cast<int>(index);
+        return ImHashStr("node", 0, ImHashData(&id, sizeof(id), seed));
+    };
+    const auto& ast = app.coordinator->ast();
+    const auto map_index = ast.roots[0];
+    const auto state_index = ast.nodes[map_index].children[0];
+    const auto transition_index = ast.nodes[state_index].children[0];
+    const auto guard_index = ast.nodes[transition_index].children[1];
+    const ImGuiID map_id = tree_id(popup->IDStack[0], map_index);
+    const ImGuiID state_id = tree_id(map_id, state_index);
+    const ImGuiID transition_id = tree_id(state_id, transition_index);
+    const ImGuiID guard_id = tree_id(transition_id, guard_index);
+    const auto find_tree = [&](ImGuiID id) {
+        const float x = popup->Pos.x + popup->Size.x - 12.0f;
+        for (float y = popup->Pos.y + 3.0f; y < popup->Pos.y + popup->Size.y - 3.0f; y += 2.0f) {
+            editor_frame(x, y);
+            if (ImGui::GetCurrentContext()->HoveredId == id)
+                return ImVec2(x, y);
+        }
+        throw std::runtime_error("AST tree item not found");
+    };
+    const auto expand_tree = [&](ImGuiID id, int depth) {
+        const auto row = find_tree(id);
+        const float x = popup->Pos.x + popup->WindowPadding.x +
+                        depth * ImGui::GetStyle().IndentSpacing + 5.0f;
+        click_at(ImVec2(x, row.y));
+        require(popup->StateStorage.GetInt(id) == 1, "AST tree arrow did not expand");
+    };
+    expand_tree(map_id, 0);
+    expand_tree(state_id, 1);
+    expand_tree(transition_id, 2);
+    const auto check_selection = [&](ImGuiID id, GraphObjectKind kind,
+                                     std::vector<std::size_t> indices,
+                                     const std::string& text) {
+        click_at(find_tree(id));
+        require(app.focus && app.focus->kind == kind && app.focus->graph_indices == indices &&
+                    app.editor->GetSectionText(app.editor->GetMainCursorSelection()) == text,
+                "AST menu click selected the wrong source or graph focus");
+        editor_frame(800, 500);
+        require(app.focus && app.focus->kind == kind && app.focus->graph_indices == indices,
+                "AST menu focus was not preserved on the next frame");
+    };
+    check_selection(map_id, GraphObjectKind::state_map, {0},
+                    source.substr(source.find("%map Main"), source.rfind("%%") + 2 - source.find("%map Main")));
+    check_selection(state_id, GraphObjectKind::state, {0},
+                    "Ready\n{\n    go [x] Done {}\n       [y] Ready {}\n}");
+    check_selection(transition_id, GraphObjectKind::transition, {0, 1},
+                    "go [x] Done {}\n       [y] Ready {}");
+    check_selection(guard_id, GraphObjectKind::guard, {1}, "[y] Ready {}");
+
+    app.editor->SetCursor(editor_position_at_offset(
+        app.editor_text, app.line_offsets, app.editor_text.find("go [x]")));
+    editor_frame(800, 500);
+    require(!app.canvas_focus && app.focus &&
+                app.focus->kind == GraphObjectKind::transition &&
+                app.focus->graph_indices == std::vector<std::size_t>({0, 1}),
+            "Editor navigation did not restore cursor-driven focus");
+    check_selection(guard_id, GraphObjectKind::guard, {1}, "[y] Ready {}");
+
+    const auto selection = app.editor->GetMainCursorSelection();
+    app.coordinator->text_changed(AnalysisCoordinator::Clock::now());
+    editor_frame(800, 500);
+    editor_frame(800, 500);
+    click_at(ImVec2(popup->Pos.x + 15.0f, popup->Pos.y + 12.0f));
+    require(!app.coordinator->source_is_indexed(), "Stale AST is still indexed");
+    require(app.editor->GetMainCursorSelection().start == selection.start &&
+                app.editor->GetMainCursorSelection().end == selection.end,
+            "Stale AST changed the selection");
+}
+
 void click(float x, float y) {
     frame(x, y, true);
     frame(x, y, false);
@@ -385,6 +506,7 @@ int main() {
         frame(800, 500, std::nullopt, renamed);
         require(canvasGeometry() != fsm_canvas, "State label did not affect rendering");
         test_canvas_selection();
+        test_ast_menu();
         ImGui::DestroyContext();
     } catch (const std::exception& error) {
         std::cerr << "render_graph_tests: " << error.what() << '\n';

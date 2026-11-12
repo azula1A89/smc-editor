@@ -63,6 +63,8 @@ auto layout = dot_layout::DotLayout{}.layout(graph);
 
 在画布上单击节点、边（包括曲线和标签）或 cluster 的边框、标题，可高亮命中元素并在编辑器中选中其完整源码范围；边选中所属 transition 的完整范围，但只高亮被点击的 edge。编辑器会滚动到选区开头，画布不会因此移动；再次操作编辑器时恢复光标驱动的联动。点击空白处保持原选择，拖拽仍用于平移。源码映射过期或元素没有对应源码（例如自动生成的 `Default` 节点、内置示例图）时，只改变画布焦点，不改变源码选区。
 
+编辑器的 `AST Nodes` 菜单按 state map、state、transition、guard 层级提供快捷跳转；点击节点选中其完整源码并聚焦对应画布元素，transition 聚焦全部 guard edges，guard 聚焦单条 edge。没有源码范围的合成节点不显示，源码修改后菜单暂不可用，直到最新分析成功。
+
 日志接口位于 [include/log.hpp](include/log.hpp)：`DiagnosticLog::write` 接收等级、来源和详情，并记录产生时间；写入、清空和快照均可跨线程安全调用。默认保留最近 10,000 条记录，超出时淘汰最旧记录；同时输出到标准错误。后台分析的诊断仅在对应结果被接受时发布，过期结果不会显示或输出。状态窗口按 Debug、Info、Warning、Error 着色，可分别开关等级并按来源的大小写敏感子串过滤；空来源过滤显示全部。多行记录计为一条，窗口按行裁剪渲染；Clear 清空历史，过滤不会删除记录。
 
 UI 代码按职责拆分：[`src/main.cpp`](src/main.cpp) 只保留入口，`src/application.cpp` 管理 GLFW/ImGui 生命周期和每帧合并，`src/editor_window.cpp`、`src/graph_window.cpp`、`src/log_window.cpp` 分别渲染窗口；`AppContext` 汇集运行时状态，`UserSettings` 通过 ImGui INI 保存窗口尺寸和画布设置。节点形状与边权重仅在图结构和标签匹配时恢复，避免将旧偏好误用到不同的图。

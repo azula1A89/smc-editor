@@ -23,9 +23,10 @@ void testConversion() {
                                std::istreambuf_iterator<char>());
     std::vector<SourceSegment> source_segments;
     std::vector<SourceSegment> source_ranges;
+    AstTreeView ast;
     DiagnosticLog debug_log(DiagnosticLog::default_capacity, false);
     const auto graph_from_editor = make_graph_from_contents(
-        contents, input_file, &debug_log, &source_segments, &source_ranges);
+        contents, input_file, &debug_log, &source_segments, &source_ranges, &ast);
     require(graph_from_editor.has_value() &&
                 graph_from_editor->nodes.size() == graph->nodes.size() &&
                 graph_from_editor->edges.size() == graph->edges.size(),
@@ -87,6 +88,30 @@ void testConversion() {
             "Map range did not include its states");
     require(!source_range_for_focus(source_ranges, GraphFocus{GraphObjectKind::state, {2}}),
             "Synthetic default state unexpectedly had a source range");
+    require(ast.roots.size() == 2, "AST tree omitted a map");
+    const auto& main_map = ast.nodes[ast.roots[0]];
+    require(main_map.label == "Map: Main" && main_map.children.size() == 2,
+            "AST map included a synthetic default state or omitted a state");
+    const auto& ready = ast.nodes[main_map.children[0]];
+    require(ready.label == "State: Ready" && !ready.children.empty(),
+            "AST tree did not nest transitions under their state");
+    const auto& go = ast.nodes[ready.children[0]];
+    require(go.source.kind == GraphObjectKind::transition &&
+                go.source.graph_indices == std::vector<std::size_t>({0, 1}) &&
+                go.children.size() == 2,
+            "AST transition did not contain both guard edges");
+    const auto& second_guard = ast.nodes[go.children[1]];
+    require(second_guard.source.kind == GraphObjectKind::guard &&
+                second_guard.source.graph_indices == std::vector<std::size_t>{1} &&
+                contents.substr(second_guard.source.begin,
+                                second_guard.source.end - second_guard.source.begin) ==
+                    "[value <= 0] Ready { reject(); }",
+            "AST guard source range or graph edge is incorrect");
+    const auto& other_map = ast.nodes[ast.roots[1]];
+    const auto& other_ready = ast.nodes[other_map.children[0]];
+    require(other_ready.label == ready.label &&
+                other_ready.source.graph_indices != ready.source.graph_indices,
+            "Same-named states in different maps lost their identities");
     const std::string utf8 = "a\r\n猫z\n";
     const auto lines = source_line_offsets(utf8);
     require(editor_position_at_offset(utf8, lines, 6) == TextEditor::DocPos(1, 1) &&

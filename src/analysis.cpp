@@ -99,6 +99,7 @@ public:
         dot_layout::DirectedGraph graph;
         std::vector<SourceSegment> source_segments;
         std::vector<SourceSegment> source_ranges;
+        AstTreeView ast;
     };
 
     DirectedGraphGenerator(const std::string& contents, const std::string& source_name,
@@ -196,13 +197,25 @@ public:
             write_log(log_, LogLevel::debug, "Analysis", detail.str());
         }
         std::vector<SourceSegment> source_ranges;
+        AstTreeView ast;
+        std::vector<std::size_t> ancestors;
         for (const auto& focus : located_foci_) {
             if (focus.kind != GraphObjectKind::guard)
                 source_ranges.push_back({focus.begin, focus.end, focus.kind,
                                          focus.graph_indices});
+            while (ancestors.size() > static_cast<std::size_t>(focus.depth))
+                ancestors.pop_back();
+            const auto index = ast.nodes.size();
+            ast.nodes.push_back({focus.label,
+                {focus.begin, focus.end, focus.kind, focus.graph_indices}, {}});
+            if (ancestors.empty())
+                ast.roots.push_back(index);
+            else
+                ast.nodes[ancestors.back()].children.push_back(index);
+            ancestors.push_back(index);
         }
         return Result{std::move(graph_), std::move(resolved_segments),
-                      std::move(source_ranges)};
+                      std::move(source_ranges), std::move(ast)};
     }
 
     void visit(const smc::Fsm& fsm) override {
@@ -219,7 +232,7 @@ public:
         const auto cluster_index = graph_.clusters.size();
         graph_.clusters.push_back({map.name, map.name, {}, std::nullopt});
         add_focus(map.location, map.end_location, GraphObjectKind::state_map,
-                  {cluster_index}, 0);
+                  {cluster_index}, 0, map.name);
         for (const auto& state : map.states)
             state.accept(*this);
         if (map.states.empty()) {
@@ -240,7 +253,7 @@ public:
                 ? dot_layout::NodeShape::Ellipse : dot_layout::NodeShape::Box});
         graph_.clusters.back().nodes.push_back(id);
         add_focus(state.location, state.end_location, GraphObjectKind::state,
-                  {node_index}, 1);
+                  {node_index}, 1, state.name);
 
         current_state_id_ = id;
         for (const auto& transition : state.transitions)
@@ -262,7 +275,8 @@ public:
         }
         if (!transition_edges.empty())
             add_focus(transition.location, transition.end_location,
-                      GraphObjectKind::transition, std::move(transition_edges), 2);
+                      GraphObjectKind::transition, std::move(transition_edges), 2,
+                      transition.name + "(" + transition.parameters + ")");
     }
 
     void visit(const smc::Guard& guard) override {
@@ -301,7 +315,8 @@ public:
             label += " {" + guard.actions + "}";
         graph_.edges.push_back({current_state_id_, target, std::move(label)});
         add_focus(guard.location, guard.end_location, GraphObjectKind::guard,
-                  {edge_index}, 3);
+                  {edge_index}, 3, guard.condition.empty()
+                      ? "default" : "[" + guard.condition + "]");
     }
 
 private:
@@ -311,18 +326,19 @@ private:
         int depth;
         GraphObjectKind kind;
         std::vector<std::size_t> graph_indices;
+        std::string label;
     };
 
     void add_focus(const smc::SourceLocation& location,
                    const smc::SourceLocation& end_location, GraphObjectKind kind,
-                   std::vector<std::size_t> indices, int depth) {
+                   std::vector<std::size_t> indices, int depth, std::string label) {
         const std::size_t begin =
             source_offset_at_location(contents_, line_offsets_, location);
         const std::size_t end =
             source_offset_at_location(contents_, line_offsets_, end_location);
         if (begin < end)
             located_foci_.push_back(
-                {begin, end, depth, kind, std::move(indices)});
+                {begin, end, depth, kind, std::move(indices), std::move(label)});
     }
 
     std::optional<std::string> resolve_state(
@@ -444,7 +460,8 @@ std::optional<SourceSegment> source_range_for_focus(
 
 std::optional<dot_layout::DirectedGraph> make_graph_from_contents(
     const std::string& contents, const std::string& source_name, DiagnosticLog* log,
-    std::vector<SourceSegment>* source_segments, std::vector<SourceSegment>* source_ranges) {
+    std::vector<SourceSegment>* source_segments, std::vector<SourceSegment>* source_ranges,
+    AstTreeView* ast) {
     smc::Diagnostics diagnostics;
     smc::Parser parser(contents, source_name, diagnostics);
     const auto fsm = parser.parse();
@@ -462,6 +479,8 @@ std::optional<dot_layout::DirectedGraph> make_graph_from_contents(
         *source_segments = std::move(result->source_segments);
     if (source_ranges)
         *source_ranges = std::move(result->source_ranges);
+    if (ast)
+        *ast = std::move(result->ast);
     return std::move(result->graph);
 }
 
@@ -519,7 +538,7 @@ void AnalysisWorker::run() {
             result.graph = job->source
                 ? make_graph_from_contents(*job->source, job->source_name,
                                            &diagnostics, &result.source_segments,
-                                           &result.source_ranges)
+                                           &result.source_ranges, &result.ast)
                 : std::optional<dot_layout::DirectedGraph>(std::move(job->graph));
             if (result.graph) {
                 apply_graph_preferences(*result.graph, job->graph_preferences);
@@ -572,6 +591,10 @@ const std::vector<SourceSegment>& AnalysisCoordinator::source_ranges() const {
     return source_ranges_;
 }
 
+const AstTreeView& AnalysisCoordinator::ast() const {
+    return ast_;
+}
+
 void AnalysisCoordinator::accept(
     AnalysisResult result, CanvasState& canvas, DiagnosticLog& log) {
     if (active_revision_ && *active_revision_ == result.revision)
@@ -587,6 +610,7 @@ void AnalysisCoordinator::accept(
         if (result.source_job) {
             source_segments_ = std::move(result.source_segments);
             source_ranges_ = std::move(result.source_ranges);
+            ast_ = std::move(result.ast);
             source_is_indexed_ = true;
             source_needs_analysis_ = false;
             log.write(LogLevel::info, "Analysis", "SMC analysis succeeded; graph and DOT layout updated.");
