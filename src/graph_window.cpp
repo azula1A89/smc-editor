@@ -216,6 +216,7 @@ void render_graph_window(AppContext& app) {
     const auto previous_options = options;
     const ImColor text_col = ImGui::GetStyle().Colors[ImGuiCol_Text];
     const ImColor line_col = ImGui::GetStyle().Colors[ImGuiCol_PlotLines];
+    const ImColor label_bg_col = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
     ImColor node_col = ImGui::GetStyle().Colors[ImGuiCol_FrameBg];node_col.Value.w = 1.0f;
 
     if (ImGui::IsWindowHovered() &&
@@ -432,14 +433,23 @@ void render_graph_window(AppContext& app) {
         for (std::size_t cluster_index = 0;
              cluster_index < layout.clusters.size(); ++cluster_index) {
             const auto& cluster = layout.clusters[cluster_index];
-            const ImVec2 top_left = to_screen({cluster.bounds.min_x, cluster.bounds.max_y});
-            const ImVec2 bottom_right = to_screen({cluster.bounds.max_x, cluster.bounds.min_y});
+            const ImVec2 tl = to_screen({cluster.bounds.min_x, cluster.bounds.max_y});
+            const ImVec2 br = to_screen({cluster.bounds.max_x, cluster.bounds.min_y});
+            const ImRect outter = [&](){
+                auto rect = ImRect(tl, br);
+                rect.Expand(4.0f);
+                return rect;
+            }();
             const bool highlighted =
                 focus_contains(GraphObjectKind::state_map, cluster_index);
-            if (visible_rect(top_left, bottom_right, 4.0f))
-                draw_list->AddRect(top_left, bottom_right,
+            if (visible_rect(tl, br, 4.0f))
+                draw_list->AddRect(tl, br,
                                    highlighted ? focus_col : line_col,
-                                   0.0f, highlighted ? 3.0f : 1.0f);
+                                   12.0f, highlighted ? 3.0f : 1.0f);
+            if (visible_rect(outter.Min, outter.Max, 4.0f))
+                draw_list->AddRect(outter.Min, outter.Max,
+                                   highlighted ? focus_col : line_col,
+                                   12.0f, highlighted ? 3.0f : 1.0f);
             if (cluster.label) {
                 const ImVec2 center = to_screen(cluster.label->center);
                 const ImVec2 text_size = ImGui::CalcTextSize(cluster.label->text.c_str());
@@ -466,9 +476,9 @@ void render_graph_window(AppContext& app) {
             const bool highlighted = focus_contains(GraphObjectKind::state, i);
             
             if (visible_rect(tl, br, 4.0f) && node.shape == dot_layout::NodeShape::Box) {
-                draw_list->AddRectFilled(tl, br, node_col);
+                draw_list->AddRectFilled(tl, br, node_col, 12.0f);
                 if (highlighted)
-                    draw_list->AddRect(tl, br, focus_col, 0.0f, 3.0f);
+                    draw_list->AddRect(tl, br, focus_col, 12.0f, 3.0f);
             } else if (visible_rect(tl, br, 4.0f)) {
                 draw_list->AddEllipseFilled(ImVec2(x, y), ImVec2(width * 0.5f, height * 0.5f), node_col);
                 if (highlighted)
@@ -482,13 +492,14 @@ void render_graph_window(AppContext& app) {
         }
         
         // Draw edges
-        draw_list->ChannelsSetCurrent(1);
         for (std::size_t edge_index = 0; edge_index < layout.edges.size(); ++edge_index) {
             const auto& edge = layout.edges[edge_index];
             const bool highlighted =
                 focus_contains(GraphObjectKind::transition, edge_index) ||
                 focus_contains(GraphObjectKind::guard, edge_index);
             const auto edge_color = highlighted ? focus_col : line_col;
+
+            draw_list->ChannelsSetCurrent(1);
             for (std::size_t i = 0; i < edge.spline_points.size(); ++i) {
                 if (!visible_spline(edge, i))
                     continue;
@@ -499,15 +510,20 @@ void render_graph_window(AppContext& app) {
                 draw_spline_with_arrow(draw_list, spl, tip, edge_color,
                                        highlighted ? 3.0f : 1.0f, settings.arrow_size);
             }
+
+            draw_list->ChannelsSetCurrent(2);
             if (edge.label) {
                 const ImVec2 center = to_screen(edge.label->center);
                 const ImVec2 half_size(edge.label->width * scale * 0.5f,
                                     edge.label->height * scale * 0.5f);
                 const ImVec2 pos(center.x - half_size.x, center.y - half_size.y);
                 const ImVec2 size = ImGui::CalcTextSize(edge.label->text.c_str());
-                if (visible_rect(pos, ImVec2(pos.x + size.x, pos.y + size.y), 4.0f))
+                if (visible_rect(pos, ImVec2(pos.x + size.x, pos.y + size.y), 4.0f)) {
+                    draw_list->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y),
+                                             label_bg_col, 18.0f);
                     draw_list->AddText(pos, highlighted ? focus_col : text_col,
                                        edge.label->text.c_str());
+                }
             }
         }
 
