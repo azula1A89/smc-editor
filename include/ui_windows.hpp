@@ -9,6 +9,7 @@ struct GraphFocus;
 
 void draw_dockspace();
 void render_editor_window(AppContext& app);
+void update_graph_focus(AppContext& app);
 void render_graph_window(AppContext& app);
 void render_log_window(AppContext& app);
 std::optional<dot_layout::Point> focused_graph_point(

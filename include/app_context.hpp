@@ -8,12 +8,12 @@
 #include <vector>
 
 #include <imgui.h>
+#include <TextEditor.h>
 
 #include <dot_layout.hpp>
 #include <log.hpp>
 #include <user_settings.hpp>
 
-class TextEditor;
 class TrieAutoComplete;
 class AnalysisWorker;
 class AnalysisCoordinator;
@@ -30,6 +30,13 @@ struct SourceSegment {
 struct GraphFocus {
     GraphObjectKind kind{GraphObjectKind::state_map};
     std::vector<std::size_t> graph_indices;
+};
+
+struct CanvasFocus {
+    GraphFocus focus;
+    TextEditor::DocPos cursor;
+    TextEditor::DocSelection selection;
+    std::size_t cursor_count;
 };
 
 struct DiagnosticViewState {
@@ -74,6 +81,7 @@ struct CanvasState {
     float origin_y = 0.0f;
     bool origin_initialized = false;
     std::optional<GraphFocus> previous_focus;
+    bool click_started = false;
 };
 
 class AppContext {
@@ -98,4 +106,5 @@ public:
     std::unique_ptr<AnalysisWorker> worker;
     std::unique_ptr<AnalysisCoordinator> coordinator;
     std::optional<GraphFocus> focus;
+    std::optional<CanvasFocus> canvas_focus;
 };

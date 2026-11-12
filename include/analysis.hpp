@@ -29,6 +29,7 @@ struct AnalysisResult {
     std::optional<dot_layout::DirectedGraph> graph;
     std::optional<dot_layout::LayoutResult> layout;
     std::vector<SourceSegment> source_segments;
+    std::vector<SourceSegment> source_ranges;
     std::vector<LogRecord> diagnostics;
 };
 
@@ -63,6 +64,7 @@ public:
     void settings_changed();
     bool source_is_indexed() const;
     const std::vector<SourceSegment>& source_segments() const;
+    const std::vector<SourceSegment>& source_ranges() const;
     void accept(AnalysisResult result, CanvasState& canvas, DiagnosticLog& log);
     std::optional<AnalysisJob> next_job(
         Clock::time_point now, const std::string& source, const std::string& source_name,
@@ -77,13 +79,15 @@ private:
     bool source_is_indexed_ = false;
     Clock::time_point deadline_;
     std::vector<SourceSegment> source_segments_;
+    std::vector<SourceSegment> source_ranges_;
 };
 
 std::optional<dot_layout::DirectedGraph> make_graph(
     const std::string& input_file = "mapmanager.sm", DiagnosticLog* log = nullptr);
 std::optional<dot_layout::DirectedGraph> make_graph_from_contents(
     const std::string& contents, const std::string& source_name, DiagnosticLog* log = nullptr,
-    std::vector<SourceSegment>* source_segments = nullptr);
+    std::vector<SourceSegment>* source_segments = nullptr,
+    std::vector<SourceSegment>* source_ranges = nullptr);
 std::optional<std::string> read_input_file(
     const std::string& input_file, DiagnosticLog* log = nullptr);
 std::optional<GraphFocus> focus_at_offset(
@@ -94,3 +98,8 @@ std::size_t editor_offset_at_position(
     std::string_view contents, const std::vector<std::size_t>& line_offsets,
     TextEditor::DocPos position);
 std::vector<std::size_t> source_line_offsets(std::string_view contents);
+TextEditor::DocPos editor_position_at_offset(
+    std::string_view contents, const std::vector<std::size_t>& line_offsets,
+    std::size_t offset);
+std::optional<SourceSegment> source_range_for_focus(
+    const std::vector<SourceSegment>& ranges, const GraphFocus& focus);

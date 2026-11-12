@@ -22,9 +22,10 @@ void testConversion() {
     const std::string contents((std::istreambuf_iterator<char>(input)),
                                std::istreambuf_iterator<char>());
     std::vector<SourceSegment> source_segments;
+    std::vector<SourceSegment> source_ranges;
     DiagnosticLog debug_log(DiagnosticLog::default_capacity, false);
     const auto graph_from_editor = make_graph_from_contents(
-        contents, input_file, &debug_log, &source_segments);
+        contents, input_file, &debug_log, &source_segments, &source_ranges);
     require(graph_from_editor.has_value() &&
                 graph_from_editor->nodes.size() == graph->nodes.size() &&
                 graph_from_editor->edges.size() == graph->edges.size(),
@@ -66,6 +67,32 @@ void testConversion() {
             "Guard declaration did not map to its edge");
     require(editor_offset_at_position("a\n猫z", TextEditor::DocPos(1, 1)) == 5,
             "Editor cursor position did not convert through UTF-8 text");
+    const auto transition_range = source_range_for_focus(
+        source_ranges, GraphFocus{GraphObjectKind::guard, {1}});
+    require(transition_range && contents.substr(transition_range->begin,
+                transition_range->end - transition_range->begin) ==
+                "go(value: int) [value > 0] Other::Ready { record(value); }\n"
+                "                   [value <= 0] Ready { reject(); }",
+            "Edge did not map to the complete owning transition");
+    const auto state_range = source_range_for_focus(
+        source_ranges, GraphFocus{GraphObjectKind::state, {0}});
+    require(state_range && contents.substr(state_range->begin,
+                state_range->end - state_range->begin).starts_with("Ready\n{\n    go") &&
+                contents[state_range->end - 1] == '}',
+            "State range did not include nested transitions");
+    const auto map_range = source_range_for_focus(
+        source_ranges, GraphFocus{GraphObjectKind::state_map, {0}});
+    require(map_range && contents.substr(map_range->begin, 9) == "%map Main" &&
+                contents.substr(map_range->end - 2, 2) == "%%",
+            "Map range did not include its states");
+    require(!source_range_for_focus(source_ranges, GraphFocus{GraphObjectKind::state, {2}}),
+            "Synthetic default state unexpectedly had a source range");
+    const std::string utf8 = "a\r\n猫z\n";
+    const auto lines = source_line_offsets(utf8);
+    require(editor_position_at_offset(utf8, lines, 6) == TextEditor::DocPos(1, 1) &&
+                editor_position_at_offset(utf8, lines, utf8.size()) == TextEditor::DocPos(2, 0) &&
+                editor_position_at_offset(utf8, lines, 2) == TextEditor::DocPos(0, 1),
+            "Source offset did not convert through UTF-8 and CRLF");
 
     DiagnosticLog diagnostics;
     require(!make_graph_from_contents("%unknown\n", "editor.sm", &diagnostics) &&

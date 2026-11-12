@@ -34,12 +34,7 @@ void render_frame(GLFWwindow* window) {
     if (auto result = app->worker->take_result())
         app->coordinator->accept(std::move(*result), app->canvas, app->log);
 
-    app->focus.reset();
-    if (app->coordinator->source_is_indexed()) {
-        const auto cursor_offset = editor_offset_at_position(
-            app->editor_text, app->line_offsets, app->editor->GetMainCursorPosition());
-        app->focus = focus_at_offset(app->coordinator->source_segments(), cursor_offset);
-    }
+    update_graph_focus(*app);
 
     const auto previous_settings_revision = app->canvas.settings_revision;
     render_graph_window(*app);

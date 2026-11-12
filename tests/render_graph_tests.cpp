@@ -31,7 +31,7 @@ void require(bool condition, const char* message) {
 
 void frame(float x, float y, std::optional<bool> mouse = std::nullopt,
            std::optional<dot_layout::DirectedGraph> graph = std::nullopt,
-           std::optional<GraphFocus> focus = std::nullopt) {
+           std::optional<GraphFocus> focus = std::nullopt, bool synchronize = false) {
     auto& app = test_app();
     if (graph) {
         app.canvas.graph = std::move(*graph);
@@ -39,7 +39,8 @@ void frame(float x, float y, std::optional<bool> mouse = std::nullopt,
         app.canvas.dirty = true;
         app.canvas.recently_replaced = true;
     }
-    app.focus = std::move(focus);
+    if (!synchronize)
+        app.focus = std::move(focus);
     ImGuiIO& io = ImGui::GetIO();
     io.AddMousePosEvent(x, y);
     if (mouse)
@@ -47,8 +48,159 @@ void frame(float x, float y, std::optional<bool> mouse = std::nullopt,
     ImGui::NewFrame();
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(900, 600), ImGuiCond_Always);
+    if (synchronize)
+        update_graph_focus(app);
     render_graph_window(app);
     ImGui::Render();
+}
+
+void test_canvas_selection() {
+    auto& app = test_app();
+    const std::string source =
+        "%start Main::Ready\n%class Context\n%header context.h\n%map Main\n%%\n"
+        "Ready\n{\n    go [x] Done {}\n       [y] Ready {}\n}\nDone\n{\n}\n%%\n";
+    app.editor = std::make_unique<TextEditor>();
+    app.editor->SetText(source);
+    app.editor_text = app.editor->GetText();
+    app.line_offsets = source_line_offsets(app.editor_text);
+    app.coordinator = std::make_unique<AnalysisCoordinator>(true, AnalysisCoordinator::Clock::now());
+    const auto job = app.coordinator->next_job(AnalysisCoordinator::Clock::now(),
+                                               app.editor_text, "canvas.sm", app.canvas);
+    require(job.has_value(), "Source analysis was not scheduled");
+    AnalysisResult result{job->revision, true};
+    result.graph = make_graph_from_contents(app.editor_text, "canvas.sm", nullptr,
+                                            &result.source_segments, &result.source_ranges);
+    require(result.graph.has_value(), "Canvas fixture failed to parse");
+    result.layout = dot_layout::DotLayout{}.layout(*result.graph);
+    app.coordinator->accept(std::move(result), app.canvas, app.log);
+    app.canvas.dirty = false;
+    app.canvas.previous_focus.reset();
+    app.canvas_focus.reset();
+    frame(800, 500, std::nullopt, std::nullopt, std::nullopt, true);
+
+    const auto place_at_center = [&](dot_layout::Point point) {
+        const auto& bounds = app.canvas.layout->bounds;
+        const auto center = ImGui::FindWindowByName("canvas")->ContentRegionRect.GetCenter();
+        const float scale = app.settings.canvas_scale;
+        app.canvas.origin_x = center.x - static_cast<float>((point.x - bounds.min_x) * scale);
+        app.canvas.origin_y = center.y - static_cast<float>((bounds.max_y - point.y) * scale);
+        return center;
+    };
+    const auto select = [&](ImVec2 point) {
+        frame(point.x, point.y, true, std::nullopt, std::nullopt, true);
+        frame(point.x, point.y, false, std::nullopt, std::nullopt, true);
+    };
+    const auto selected_text = [&] {
+        return app.editor->GetSectionText(app.editor->GetMainCursorSelection());
+    };
+
+    app.settings.canvas_scale = 1.6f;
+    auto point = place_at_center(app.canvas.layout->nodes[0].center);
+    select(point);
+    require(app.focus && app.focus->kind == GraphObjectKind::state &&
+                app.focus->graph_indices == std::vector<std::size_t>{0} &&
+                selected_text() == "Ready\n{\n    go [x] Done {}\n       [y] Ready {}\n}",
+            "Node click did not focus the state and select its complete source");
+    const float origin_x = app.canvas.origin_x;
+    const float origin_y = app.canvas.origin_y;
+    frame(800, 500, std::nullopt, std::nullopt, std::nullopt, true);
+    require(app.focus && app.focus->kind == GraphObjectKind::state &&
+                app.canvas.origin_x == origin_x && app.canvas.origin_y == origin_y,
+            "Click focus or canvas position changed on the following frame");
+
+    app.settings.canvas_scale = 0.7f;
+    require(app.canvas.layout->edges[1].label.has_value(), "Edge label missing");
+    point = place_at_center(app.canvas.layout->edges[1].label->center);
+    select(point);
+    require(app.focus && app.focus->kind == GraphObjectKind::guard &&
+                app.focus->graph_indices == std::vector<std::size_t>{1} &&
+                selected_text() == "go [x] Done {}\n       [y] Ready {}",
+            "Edge click did not select its transition and focus only that edge");
+    frame(800, 500, std::nullopt, std::nullopt, std::nullopt, true);
+    require(app.focus && app.focus->kind == GraphObjectKind::guard &&
+                app.focus->graph_indices == std::vector<std::size_t>{1},
+            "Programmatic selection replaced the clicked edge focus");
+
+    const auto& spline = app.canvas.layout->edges[0].spline_points[0];
+    require(spline.size() >= 4, "Edge curve missing");
+    const dot_layout::Point curve_midpoint{
+        (spline[0].x + 3 * spline[1].x + 3 * spline[2].x + spline[3].x) / 8,
+        (spline[0].y + 3 * spline[1].y + 3 * spline[2].y + spline[3].y) / 8};
+    point = place_at_center(curve_midpoint);
+    select(point);
+    require(app.focus && app.focus->kind == GraphObjectKind::guard &&
+                app.focus->graph_indices == std::vector<std::size_t>{0} &&
+                selected_text() == "go [x] Done {}\n       [y] Ready {}",
+            "Curve click did not focus the first edge or select its transition");
+
+    app.editor->SetCursor(editor_position_at_offset(
+        app.editor_text, app.line_offsets, app.editor_text.find("go [x]")));
+    update_graph_focus(app);
+    require(!app.canvas_focus && app.focus && app.focus->kind == GraphObjectKind::transition &&
+                app.focus->graph_indices == std::vector<std::size_t>({0, 1}),
+            "Editor cursor did not restore the transition's full edge focus");
+    frame(800, 500, std::nullopt, std::nullopt, std::nullopt, true);
+
+    const auto& cluster = app.canvas.layout->clusters[0];
+    require(cluster.label.has_value(), "Cluster label missing");
+    point = place_at_center(cluster.label->center);
+    select(point);
+    require(app.focus && app.focus->kind == GraphObjectKind::state_map &&
+                selected_text() == app.editor_text.substr(
+                    app.editor_text.find("%map Main"),
+                    app.editor_text.rfind("%%") + 2 - app.editor_text.find("%map Main")),
+            "Cluster label click did not select the complete map");
+
+    const auto previous_selection = selected_text();
+    point = place_at_center({cluster.bounds.min_x,
+                             (cluster.bounds.min_y + cluster.bounds.max_y) * 0.5});
+    select(point);
+    require(app.focus && app.focus->kind == GraphObjectKind::state_map &&
+                selected_text() == previous_selection,
+            "Cluster border click did not select its map");
+    point = place_at_center(app.canvas.layout->nodes[2].center);
+    select(point);
+    require(app.focus && app.focus->kind == GraphObjectKind::state &&
+                app.focus->graph_indices == std::vector<std::size_t>{2} &&
+                selected_text() == previous_selection,
+            "Synthetic default node changed the editor selection");
+
+    app.coordinator->text_changed(AnalysisCoordinator::Clock::now());
+    point = place_at_center(app.canvas.layout->nodes[1].center);
+    select(point);
+    require(app.focus && app.focus->kind == GraphObjectKind::state &&
+                app.focus->graph_indices == std::vector<std::size_t>{1} &&
+                selected_text() == previous_selection,
+            "Stale source mapping changed the selection or prevented focus");
+    point = place_at_center(app.canvas.layout->nodes[2].center);
+    select(point);
+    require(app.focus && app.focus->graph_indices == std::vector<std::size_t>{2} &&
+                selected_text() == previous_selection,
+            "Unmapped node did not retain the editor selection");
+    frame(30, 550, true, std::nullopt, std::nullopt, true);
+    frame(30, 550, false, std::nullopt, std::nullopt, true);
+    require(app.focus && app.focus->graph_indices == std::vector<std::size_t>{2} &&
+                selected_text() == previous_selection,
+            "Blank click changed the selection");
+    const auto bar = ImGui::FindWindowByName("canvas")->MenuBarRect();
+    const ImVec2 settings_button(bar.Min.x + 20.0f, (bar.Min.y + bar.Max.y) * 0.5f);
+    select(settings_button);
+    require(app.focus && app.focus->graph_indices == std::vector<std::size_t>{2} &&
+                selected_text() == previous_selection,
+            "Menu click changed the canvas selection");
+    select(settings_button);
+    point = place_at_center(app.canvas.layout->nodes[0].center);
+    const float before_drag = app.canvas.origin_x;
+    frame(point.x, point.y, true, std::nullopt, std::nullopt, true);
+    frame(point.x + 30.0f, point.y, std::nullopt, std::nullopt, std::nullopt, true);
+    frame(point.x + 30.0f, point.y, false, std::nullopt, std::nullopt, true);
+    require(app.focus && app.focus->graph_indices == std::vector<std::size_t>{2} &&
+                selected_text() == previous_selection && app.canvas.origin_x > before_drag,
+            "Dragging selected an element or failed to pan");
+    app.editor->SetCursor(TextEditor::DocPos(0, 0));
+    update_graph_focus(app);
+    require(!app.canvas_focus && !app.focus,
+            "Editor cursor movement did not release canvas focus");
 }
 
 void click(float x, float y) {
@@ -232,6 +384,7 @@ int main() {
         renamed.nodes[0].label = "A much longer state label";
         frame(800, 500, std::nullopt, renamed);
         require(canvasGeometry() != fsm_canvas, "State label did not affect rendering");
+        test_canvas_selection();
         ImGui::DestroyContext();
     } catch (const std::exception& error) {
         std::cerr << "render_graph_tests: " << error.what() << '\n';

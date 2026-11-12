@@ -98,6 +98,7 @@ public:
     struct Result {
         dot_layout::DirectedGraph graph;
         std::vector<SourceSegment> source_segments;
+        std::vector<SourceSegment> source_ranges;
     };
 
     DirectedGraphGenerator(const std::string& contents, const std::string& source_name,
@@ -194,7 +195,14 @@ public:
             detail << ']';
             write_log(log_, LogLevel::debug, "Analysis", detail.str());
         }
-        return Result{std::move(graph_), std::move(resolved_segments)};
+        std::vector<SourceSegment> source_ranges;
+        for (const auto& focus : located_foci_) {
+            if (focus.kind != GraphObjectKind::guard)
+                source_ranges.push_back({focus.begin, focus.end, focus.kind,
+                                         focus.graph_indices});
+        }
+        return Result{std::move(graph_), std::move(resolved_segments),
+                      std::move(source_ranges)};
     }
 
     void visit(const smc::Fsm& fsm) override {
@@ -400,9 +408,43 @@ std::optional<GraphFocus> focus_at_offset(
     return GraphFocus{candidate.kind, candidate.graph_indices};
 }
 
+TextEditor::DocPos editor_position_at_offset(
+    std::string_view contents, const std::vector<std::size_t>& line_offsets,
+    std::size_t offset) {
+    offset = std::min(offset, contents.size());
+    const auto line_it = std::upper_bound(line_offsets.begin(), line_offsets.end(), offset);
+    if (line_it == line_offsets.begin())
+        return {};
+    const auto line = static_cast<std::size_t>(std::distance(line_offsets.begin(), line_it) - 1);
+    std::size_t glyphs = 0;
+    for (std::size_t index = line_offsets[line]; index < offset; ++index) {
+        const auto byte = static_cast<unsigned char>(contents[index]);
+        if (byte == '\r' || byte == '\n')
+            break;
+        if ((byte & 0xC0) != 0x80)
+            ++glyphs;
+    }
+    return {line, glyphs};
+}
+
+std::optional<SourceSegment> source_range_for_focus(
+    const std::vector<SourceSegment>& ranges, const GraphFocus& focus) {
+    if (focus.graph_indices.empty())
+        return std::nullopt;
+    const auto kind = focus.kind == GraphObjectKind::guard
+        ? GraphObjectKind::transition : focus.kind;
+    for (const auto& range : ranges) {
+        if (range.kind == kind &&
+            std::find(range.graph_indices.begin(), range.graph_indices.end(),
+                      focus.graph_indices.front()) != range.graph_indices.end())
+            return range;
+    }
+    return std::nullopt;
+}
+
 std::optional<dot_layout::DirectedGraph> make_graph_from_contents(
     const std::string& contents, const std::string& source_name, DiagnosticLog* log,
-    std::vector<SourceSegment>* source_segments) {
+    std::vector<SourceSegment>* source_segments, std::vector<SourceSegment>* source_ranges) {
     smc::Diagnostics diagnostics;
     smc::Parser parser(contents, source_name, diagnostics);
     const auto fsm = parser.parse();
@@ -418,6 +460,8 @@ std::optional<dot_layout::DirectedGraph> make_graph_from_contents(
         return std::nullopt;
     if (source_segments)
         *source_segments = std::move(result->source_segments);
+    if (source_ranges)
+        *source_ranges = std::move(result->source_ranges);
     return std::move(result->graph);
 }
 
@@ -474,7 +518,8 @@ void AnalysisWorker::run() {
         try {
             result.graph = job->source
                 ? make_graph_from_contents(*job->source, job->source_name,
-                                           &diagnostics, &result.source_segments)
+                                           &diagnostics, &result.source_segments,
+                                           &result.source_ranges)
                 : std::optional<dot_layout::DirectedGraph>(std::move(job->graph));
             if (result.graph) {
                 apply_graph_preferences(*result.graph, job->graph_preferences);
@@ -523,6 +568,10 @@ const std::vector<SourceSegment>& AnalysisCoordinator::source_segments() const {
     return source_segments_;
 }
 
+const std::vector<SourceSegment>& AnalysisCoordinator::source_ranges() const {
+    return source_ranges_;
+}
+
 void AnalysisCoordinator::accept(
     AnalysisResult result, CanvasState& canvas, DiagnosticLog& log) {
     if (active_revision_ && *active_revision_ == result.revision)
@@ -537,6 +586,7 @@ void AnalysisCoordinator::accept(
         canvas.recently_replaced = result.source_job;
         if (result.source_job) {
             source_segments_ = std::move(result.source_segments);
+            source_ranges_ = std::move(result.source_ranges);
             source_is_indexed_ = true;
             source_needs_analysis_ = false;
             log.write(LogLevel::info, "Analysis", "SMC analysis succeeded; graph and DOT layout updated.");

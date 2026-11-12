@@ -115,6 +115,129 @@ bool same_layout_options(const dot_layout::LayoutOptions& left,
            left.compound == right.compound && left.ratio == right.ratio &&
            same_size;
 }
+
+bool near_line(ImVec2 point, ImVec2 a, ImVec2 b, float tolerance) {
+    const ImVec2 nearest = ImLengthSqr(b - a) == 0.0f
+        ? a : ImLineClosestPoint(a, b, point);
+    return ImLengthSqr(point - nearest) <= tolerance * tolerance;
+}
+
+std::optional<GraphFocus> hit_graph(
+    ImVec2 point, ImVec2 origin, float scale, const dot_layout::DirectedGraph& graph,
+    const dot_layout::LayoutResult& layout, float arrow_size) {
+    constexpr float tolerance = 5.0f;
+    const auto screen = [&](dot_layout::Point p) {
+        return ImVec2(origin.x + static_cast<float>((p.x - layout.bounds.min_x) * scale),
+                      origin.y + static_cast<float>((layout.bounds.max_y - p.y) * scale));
+    };
+    for (std::size_t i = layout.edges.size(); i-- > 0;) {
+        const auto& edge = layout.edges[i];
+        if (!edge.label)
+            continue;
+        const ImVec2 center = screen(edge.label->center);
+        const ImVec2 pos(center.x - edge.label->width * scale * 0.5f,
+                         center.y - edge.label->height * scale * 0.5f);
+        const ImVec2 size = ImGui::CalcTextSize(edge.label->text.c_str());
+        if (ImRect(pos, pos + size).Contains(point))
+            return GraphFocus{GraphObjectKind::guard, {i}};
+    }
+    for (std::size_t i = layout.nodes.size(); i-- > 0;) {
+        const auto& node = layout.nodes[i];
+        const ImVec2 center = screen(node.center);
+        const float rx = static_cast<float>(node.width * scale * 0.5);
+        const float ry = static_cast<float>(node.height * scale * 0.5);
+        if (rx <= 0.0f || ry <= 0.0f)
+            continue;
+        const float dx = std::abs(point.x - center.x);
+        const float dy = std::abs(point.y - center.y);
+        bool hit = false;
+        if (node.shape == dot_layout::NodeShape::Box) {
+            const float radius = std::min({12.0f, rx, ry});
+            const float corner_x = std::max(0.0f, dx - (rx - radius));
+            const float corner_y = std::max(0.0f, dy - (ry - radius));
+            hit = dx <= rx && dy <= ry &&
+                  corner_x * corner_x + corner_y * corner_y <= radius * radius;
+        } else {
+            hit = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1.0f;
+        }
+        if (hit && i < graph.nodes.size())
+            return GraphFocus{GraphObjectKind::state, {i}};
+    }
+    for (std::size_t i = layout.edges.size(); i-- > 0;) {
+        const auto& edge = layout.edges[i];
+        for (std::size_t j = 0; j < edge.spline_points.size(); ++j) {
+            const auto& spline = edge.spline_points[j];
+            if (spline.empty())
+                continue;
+            std::size_t k = 0;
+            while (k + 3 < spline.size()) {
+                const ImVec2 nearest = ImBezierCubicClosestPointCasteljau(
+                    screen(spline[k]), screen(spline[k + 1]), screen(spline[k + 2]),
+                    screen(spline[k + 3]), point, ImGui::GetStyle().CurveTessellationTol);
+                if (ImLengthSqr(point - nearest) <= tolerance * tolerance)
+                    return GraphFocus{GraphObjectKind::guard, {i}};
+                k += 3;
+            }
+            while (k + 1 < spline.size()) {
+                if (near_line(point, screen(spline[k]), screen(spline[k + 1]), tolerance))
+                    return GraphFocus{GraphObjectKind::guard, {i}};
+                ++k;
+            }
+            if (j < edge.arrow_tips.size() && edge.arrow_tips[j]) {
+                const ImVec2 tip = screen(*edge.arrow_tips[j]);
+                if (near_line(point, screen(spline.back()), tip, tolerance))
+                    return GraphFocus{GraphObjectKind::guard, {i}};
+                for (auto it = spline.rbegin(); it != spline.rend(); ++it) {
+                    const ImVec2 delta = tip - screen(*it);
+                    const float length_squared = ImLengthSqr(delta);
+                    if (length_squared == 0.0f)
+                        continue;
+                    const ImVec2 direction = delta * (1.0f / std::sqrt(length_squared));
+                    const ImVec2 base = tip - direction * arrow_size;
+                    const ImVec2 side(-direction.y * arrow_size * 0.4f,
+                                       direction.x * arrow_size * 0.4f);
+                    if (arrow_size > 0.0f &&
+                        ImTriangleContainsPoint(tip, base + side, base - side, point))
+                        return GraphFocus{GraphObjectKind::guard, {i}};
+                    break;
+                }
+            }
+        }
+    }
+    // Prefer the smallest matching cluster when nested borders overlap.
+    std::optional<GraphFocus> cluster_hit;
+    double smallest_area = std::numeric_limits<double>::infinity();
+    for (const auto& cluster : layout.clusters) {
+        const ImVec2 tl = screen({cluster.bounds.min_x, cluster.bounds.max_y});
+        const ImVec2 br = screen({cluster.bounds.max_x, cluster.bounds.min_y});
+        bool hit = false;
+        for (const float expansion : {0.0f, 4.0f}) {
+            const ImVec2 min = tl - ImVec2(expansion, expansion);
+            const ImVec2 max = br + ImVec2(expansion, expansion);
+            hit |= near_line(point, min, ImVec2(max.x, min.y), tolerance) ||
+                   near_line(point, ImVec2(max.x, min.y), max, tolerance) ||
+                   near_line(point, max, ImVec2(min.x, max.y), tolerance) ||
+                   near_line(point, ImVec2(min.x, max.y), min, tolerance);
+        }
+        if (cluster.label) {
+            const ImVec2 center = screen(cluster.label->center);
+            const ImVec2 size = ImGui::CalcTextSize(cluster.label->text.c_str());
+            hit |= ImRect(center - size * 0.5f, center + size * 0.5f).Contains(point);
+        }
+        const double area = (cluster.bounds.max_x - cluster.bounds.min_x) *
+                            (cluster.bounds.max_y - cluster.bounds.min_y);
+        if (!hit || area >= smallest_area)
+            continue;
+        const auto found = std::find_if(graph.clusters.begin(), graph.clusters.end(),
+            [&](const auto& candidate) { return candidate.id == cluster.id; });
+        if (found != graph.clusters.end()) {
+            smallest_area = area;
+            cluster_hit = GraphFocus{GraphObjectKind::state_map,
+                {static_cast<std::size_t>(std::distance(graph.clusters.begin(), found))}};
+        }
+    }
+    return cluster_hit;
+}
 } // namespace
 
 std::optional<dot_layout::Point> focused_graph_point(
@@ -428,6 +551,42 @@ void render_graph_window(AppContext& app) {
 
     {
         FontSize font_size(14.0f);
+
+        const ImRect content = ImGui::GetCurrentWindow()->ContentRegionRect;
+        const bool over_canvas = ImGui::IsWindowHovered() &&
+            content.Contains(ImGui::GetMousePos()) && visible.Contains(ImGui::GetMousePos());
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            canvas.click_started = over_canvas;
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            if (canvas.click_started && over_canvas &&
+                !ImGui::IsMouseDragPastThreshold(ImGuiMouseButton_Left)) {
+                if (auto hit = hit_graph(ImGui::GetMousePos(), origin, scale, graph,
+                                         layout, settings.arrow_size)) {
+                    app.focus = *hit;
+                    canvas.previous_focus = *hit;
+                    if (app.editor && app.coordinator &&
+                        app.coordinator->source_is_indexed()) {
+                        if (const auto range = source_range_for_focus(
+                                app.coordinator->source_ranges(), *hit)) {
+                            const auto start = editor_position_at_offset(
+                                app.editor_text, app.line_offsets, range->begin);
+                            const auto end = editor_position_at_offset(
+                                app.editor_text, app.line_offsets, range->end);
+                            app.editor->SetCursor(start);
+                            app.editor->SelectRegion(start, end);
+                            app.editor->ScrollToLine(start.line);
+                        }
+                    }
+                    if (app.editor) {
+                        app.canvas_focus = CanvasFocus{
+                            *hit, app.editor->GetMainCursorPosition(),
+                            app.editor->GetMainCursorSelection(),
+                            app.editor->GetNumberOfCursors()};
+                    }
+                }
+            }
+            canvas.click_started = false;
+        }
 
         draw_list->ChannelsSetCurrent(0);
         for (std::size_t cluster_index = 0;

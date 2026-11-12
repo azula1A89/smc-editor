@@ -46,7 +46,8 @@ void test_worker() {
     dot_layout::LayoutOptions options;
     worker.submit({1, *contents, file, {}, options});
     auto valid = wait_for(worker, 1);
-    require(valid.graph && valid.layout && !valid.source_segments.empty(),
+    require(valid.graph && valid.layout && !valid.source_segments.empty() &&
+                !valid.source_ranges.empty(),
             "Worker did not return a graph, layout and source mapping");
     require(valid.graph->nodes.size() == valid.layout->nodes.size() &&
                 valid.graph->edges.size() == valid.layout->edges.size(),
@@ -116,11 +117,13 @@ void test_coordinator() {
                                  "SMC", "stale diagnostic"});
     stale.graph = dot_layout::DirectedGraph{};
     stale.layout = dot_layout::LayoutResult{};
+    stale.source_ranges.push_back({1, 2, GraphObjectKind::state, {0}});
     std::ostringstream stale_output;
     auto* previous_stderr = std::cerr.rdbuf(stale_output.rdbuf());
     coordinator.accept(std::move(stale), canvas, log);
     std::cerr.rdbuf(previous_stderr);
-    require(log.snapshot().records.empty() && !coordinator.source_is_indexed() && !canvas.graph.empty(),
+    require(log.snapshot().records.empty() && !coordinator.source_is_indexed() &&
+                coordinator.source_ranges().empty() && !canvas.graph.empty(),
             "Stale analysis replaced the current graph or logged diagnostics");
     require(stale_output.str().empty(), "Stale diagnostic reached standard error");
     require(!coordinator.next_job(start + 1099ms, "b", "test.sm", canvas),
@@ -141,8 +144,11 @@ void test_coordinator() {
     AnalysisResult success{newest->revision, true};
     success.graph = dot_layout::DirectedGraph{{{"new", "New"}}, {}, {}};
     success.layout = dot_layout::LayoutResult{};
+    success.source_ranges.push_back({1, 3, GraphObjectKind::state, {0}});
     coordinator.accept(std::move(success), canvas, log);
-    require(coordinator.source_is_indexed() && canvas.graph.nodes[0].id == "new",
+    require(coordinator.source_is_indexed() && canvas.graph.nodes[0].id == "new" &&
+                coordinator.source_ranges().size() == 1 &&
+                coordinator.source_ranges()[0].begin == 1,
             "Latest valid analysis was not applied");
     coordinator.text_changed(start + 1200ms);
     auto invalid_job = coordinator.next_job(start + 1700ms, "bad", "test.sm", canvas);
