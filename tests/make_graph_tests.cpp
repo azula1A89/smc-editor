@@ -22,12 +22,27 @@ void testConversion() {
     const std::string contents((std::istreambuf_iterator<char>(input)),
                                std::istreambuf_iterator<char>());
     std::vector<SourceSegment> source_segments;
+    DiagnosticLog debug_log(DiagnosticLog::default_capacity, false);
     const auto graph_from_editor = make_graph_from_contents(
-        contents, input_file, nullptr, &source_segments);
+        contents, input_file, &debug_log, &source_segments);
     require(graph_from_editor.has_value() &&
                 graph_from_editor->nodes.size() == graph->nodes.size() &&
                 graph_from_editor->edges.size() == graph->edges.size(),
             "Editor contents did not produce the same graph as file input");
+    const auto debug_records = debug_log.snapshot().records;
+    require(debug_records.size() == source_segments.size(),
+            "Source segment debug log count did not match generated segments");
+    for (std::size_t index = 0; index < debug_records.size(); ++index) {
+        const auto& record = debug_records[index];
+        require(record.level == LogLevel::debug && record.source == "Analysis" &&
+                    record.detail.find("source_segments[" + std::to_string(index) + "]") !=
+                        std::string::npos &&
+                    record.detail.find("begin=") != std::string::npos &&
+                    record.detail.find("end=") != std::string::npos &&
+                    record.detail.find("kind=") != std::string::npos &&
+                    record.detail.find("graph_indices=[") != std::string::npos,
+                "Source segment debug log omitted expected metadata");
+    }
     const auto other_map_focus = focus_at_offset(
         source_segments, contents.find("%map Other"));
     require(other_map_focus && other_map_focus->kind == GraphObjectKind::state_map &&

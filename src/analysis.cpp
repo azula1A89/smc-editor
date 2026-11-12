@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -81,6 +82,16 @@ int focus_priority(GraphObjectKind kind) {
     return 0;
 }
 
+const char* graph_object_kind_name(GraphObjectKind kind) {
+    switch (kind) {
+    case GraphObjectKind::state_map: return "state_map";
+    case GraphObjectKind::state: return "state";
+    case GraphObjectKind::transition: return "transition";
+    case GraphObjectKind::guard: return "guard";
+    }
+    return "unknown";
+}
+
 class DirectedGraphGenerator final : public smc::Generator {
 public:
     struct Result {
@@ -128,6 +139,26 @@ public:
                     {focus.offset, end, focus.kind, focus.graph_indices});
             }
             index = next;
+        }
+        if (resolved_segments.empty()) {
+            write_log(log_, LogLevel::debug, "Analysis",
+                      source_name_ + ": source_segments is empty");
+        }
+        for (std::size_t index = 0; index < resolved_segments.size(); ++index) {
+            const auto& segment = resolved_segments[index];
+            std::ostringstream detail;
+            detail << source_name_ << ": source_segments[" << index << "] begin="
+                   << segment.begin << " end=" << segment.end
+                   << " kind=" << graph_object_kind_name(segment.kind)
+                   << " graph_indices=[";
+            for (std::size_t graph_index = 0;
+                 graph_index < segment.graph_indices.size(); ++graph_index) {
+                if (graph_index > 0)
+                    detail << ", ";
+                detail << segment.graph_indices[graph_index];
+            }
+            detail << ']';
+            write_log(log_, LogLevel::debug, "Analysis", detail.str());
         }
         return Result{std::move(graph_), std::move(resolved_segments)};
     }
