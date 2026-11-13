@@ -1,11 +1,52 @@
 #include <imgui.h>
 #include <TextEditor.h>
 
+#include <exception>
+#include <filesystem>
+#include <string>
+
 #include <analysis.hpp>
 #include <app_context.hpp>
 #include <ui_windows.hpp>
 
 namespace {
+
+void log_cpp_generation_success(AppContext& app, const CppGenerationFiles& files) {
+    app.log.write(LogLevel::info, "C++ generator",
+                  "Generated '" + files.header_path.string() + "' and '" +
+                      files.source_path.string() + "'");
+}
+
+void render_cpp_generation_confirmation(AppContext& app) {
+    if (!app.pending_cpp_generation)
+        return;
+    bool open = true;
+    if (ImGui::BeginPopupModal(
+            "Overwrite generated C++ files?", &open, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const auto& files = *app.pending_cpp_generation;
+        ImGui::Text("These output files already exist:");
+        ImGui::TextWrapped("%s", files.header_path.string().c_str());
+        ImGui::TextWrapped("%s", files.source_path.string().c_str());
+        if (ImGui::Button("Overwrite")) {
+            try {
+                write_cpp_files(files);
+                log_cpp_generation_success(app, files);
+            } catch (const std::exception& error) {
+                app.log.write(LogLevel::error, "C++ generator", error.what());
+            }
+            app.pending_cpp_generation.reset();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            app.pending_cpp_generation.reset();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    if (!open)
+        app.pending_cpp_generation.reset();
+}
 
 void render_ast_node(AppContext& app, const AstTreeView& ast, std::size_t index) {
     const auto& node = ast.nodes[index];
@@ -47,9 +88,11 @@ void select_graph_source(AppContext& app, const SourceSegment& source) {
 void render_editor_window(AppContext& app) {
     if (!ImGui::Begin("SMC Editor", nullptr, ImGuiWindowFlags_MenuBar)) {
         ImGui::End();
+        render_cpp_generation_confirmation(app);
         return;
     }
 
+    bool open_cpp_overwrite_popup = false;
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("ast")) {
             if (!app.coordinator || !app.coordinator->source_is_indexed()) {
@@ -63,8 +106,32 @@ void render_editor_window(AppContext& app) {
             }
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("generate")) {
+            if (ImGui::MenuItem("generate .hpp and .cpp")) {
+                try {
+                    app.pending_cpp_generation = generate_cpp_files(
+                        app.editor->GetText(), app.input_file);
+                    const auto& files = *app.pending_cpp_generation;
+                    if (std::filesystem::exists(files.header_path) ||
+                        std::filesystem::exists(files.source_path)) {
+                        open_cpp_overwrite_popup = true;
+                    } else {
+                        write_cpp_files(files);
+                        log_cpp_generation_success(app, files);
+                        app.pending_cpp_generation.reset();
+                    }
+                } catch (const std::exception& error) {
+                    app.pending_cpp_generation.reset();
+                    app.log.write(LogLevel::error, "C++ generator", error.what());
+                }
+            }
+            ImGui::EndMenu();
+        }
         ImGui::EndMenuBar();
     }
+    if (open_cpp_overwrite_popup)
+        ImGui::OpenPopup("Overwrite generated C++ files?");
+    render_cpp_generation_confirmation(app);
     const bool changed = app.editor->Render("Source", ImVec2(0.0f, 0.0f));
     if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
         ImGui::IsMouseClicked(ImGuiMouseButton_Left))

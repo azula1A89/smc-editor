@@ -10,6 +10,7 @@
 #include <imgui.h>
 #include <TextEditor.h>
 
+#include <cpp_generation.hpp>
 #include <dot_layout.hpp>
 #include <log.hpp>
 #include <user_settings.hpp>
@@ -107,4 +108,5 @@ public:
     std::unique_ptr<AnalysisCoordinator> coordinator;
     std::optional<GraphFocus> focus;
     std::optional<CanvasFocus> canvas_focus;
+    std::optional<CppGenerationFiles> pending_cpp_generation;
 };

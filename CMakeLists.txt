@@ -27,6 +27,7 @@ add_library(app_ui STATIC
   src/app_context.cpp
   src/user_settings.cpp
   src/analysis.cpp
+  src/cpp_generation.cpp
   src/dockspace.cpp
   src/editor_window.cpp
   src/graph_window.cpp
@@ -58,6 +59,9 @@ if(BUILD_TESTING)
   target_link_libraries(performance_pipeline_tests PRIVATE app_ui)
   target_compile_definitions(performance_pipeline_tests PRIVATE TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   add_test(NAME performance_pipeline_tests COMMAND performance_pipeline_tests)
+  add_executable(cpp_generation_tests tests/cpp_generation_tests.cpp)
+  target_link_libraries(cpp_generation_tests PRIVATE app_ui)
+  add_test(NAME cpp_generation_tests COMMAND cpp_generation_tests)
   add_executable(smc_editor_language_tests tests/smc_editor_language_tests.cpp)
   target_link_libraries(smc_editor_language_tests PRIVATE imgui)
   target_include_directories(smc_editor_language_tests PRIVATE include)
