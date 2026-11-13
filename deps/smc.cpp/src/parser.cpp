@@ -1,5 +1,7 @@
 #include "smc/parser.hpp"
 
+#include "cpp_generator_internal.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <stdexcept>
@@ -29,65 +31,12 @@ bool is_identifier_part(char ch) {
 }
 
 bool valid_cpp_parameters(std::string_view parameters) {
-    if (trim(std::string(parameters)).empty()) {
+    try {
+        (void)cpp_detail::parameters(parameters);
         return true;
+    } catch (const std::invalid_argument&) {
+        return false;
     }
-
-    std::size_t begin = 0;
-    std::size_t angle_depth = 0;
-    std::size_t paren_depth = 0;
-    std::size_t bracket_depth = 0;
-    char quote = '\0';
-    bool escaped = false;
-    for (std::size_t index = 0; index <= parameters.size(); ++index) {
-        const char ch = index == parameters.size() ? ',' : parameters[index];
-        if (quote != '\0') {
-            if (escaped) {
-                escaped = false;
-            } else if (ch == '\\') {
-                escaped = true;
-            } else if (ch == quote) {
-                quote = '\0';
-            }
-            continue;
-        }
-        if (ch == '"' || ch == '\'') {
-            quote = ch;
-            continue;
-        }
-        if (ch == '<') {
-            ++angle_depth;
-        } else if (ch == '>' && angle_depth != 0) {
-            --angle_depth;
-        } else if (ch == '(') {
-            ++paren_depth;
-        } else if (ch == ')' && paren_depth != 0) {
-            --paren_depth;
-        } else if (ch == '[') {
-            ++bracket_depth;
-        } else if (ch == ']' && bracket_depth != 0) {
-            --bracket_depth;
-        }
-
-        if (ch == ',' && angle_depth == 0 && paren_depth == 0 &&
-            bracket_depth == 0) {
-            const auto part = parameters.substr(begin, index - begin);
-            const auto colon = part.find(':');
-            if (colon == std::string_view::npos || colon == 0 ||
-                colon + 1 >= part.size() || part[colon - 1] == ':' ||
-                part[colon + 1] == ':') {
-                return false;
-            }
-            const auto name = trim(std::string(part.substr(0, colon)));
-            if (name.empty() || !is_identifier_start(name.front()) ||
-                !std::all_of(name.begin() + 1, name.end(), is_identifier_part) ||
-                trim(std::string(part.substr(colon + 1))).empty()) {
-                return false;
-            }
-            begin = index + 1;
-        }
-    }
-    return angle_depth == 0 && paren_depth == 0 && bracket_depth == 0 && quote == '\0';
 }
 
 std::optional<std::string> validate_action_body(std::string_view body) {
@@ -537,7 +486,22 @@ Guard Parser::parse_guard() {
         guard.transition_type = "pop";
         if (peek().kind == TokenKind::left_paren) {
             const Token opening = consume();
-            guard.pop_arguments = trim(read_parenthesized(opening));
+            const auto body = read_parenthesized(opening);
+            const auto comma = body.find(',');
+            guard.end_state = trim(body.substr(0, comma));
+            if (comma != std::string::npos) {
+                guard.pop_arguments = trim(body.substr(comma + 1));
+            }
+            if (!guard.end_state.empty() &&
+                (!is_identifier_start(guard.end_state.front()) ||
+                 !std::all_of(guard.end_state.begin() + 1, guard.end_state.end(),
+                              is_identifier_part))) {
+                fail(opening, "A pop transition requires a transition name before its arguments.");
+            }
+            if (comma != std::string::npos &&
+                (guard.end_state.empty() || guard.pop_arguments.empty())) {
+                fail(opening, "A pop transition requires a transition name and arguments.");
+            }
         }
     } else {
         const Token destination = expect_identifier("an end state, push, pop or jump");

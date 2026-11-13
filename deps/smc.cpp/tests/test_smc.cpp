@@ -1,8 +1,11 @@
+#include "smc/generator.hpp"
 #include "smc/lexer.hpp"
 #include "smc/parser.hpp"
 #include "smc/syntax_checker.hpp"
 
 #include <cassert>
+#include <sstream>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -220,6 +223,60 @@ Ready { reset Root::Idle {} }
     assert(diagnostics.empty());
 }
 
+void test_pop_and_generator_diagnostics() {
+    const std::string source = R"SMC(%start Main::Ready
+%class Context
+%header context.h
+%map Main
+%%
+Ready { back pop(done, make(1, 2)) {} done(value: int) nil {} }
+%%
+)SMC";
+    smc::Diagnostics diagnostics;
+    smc::Parser parser(source, "machine.sm", diagnostics);
+    auto fsm = parser.parse();
+    assert(fsm);
+    const auto& guard = fsm->maps.front().states.front().transitions.front().guards.front();
+    assert(guard.end_state == "done");
+    assert(guard.pop_arguments == "make(1, 2)");
+    smc::SyntaxChecker checker(diagnostics);
+    assert(checker.check(*fsm));
+
+    fsm->maps.front().states.front().transitions.front().name = "switch";
+    std::ostringstream output;
+    smc::CppHeaderGenerator generator(output, "machine.hpp");
+    try {
+        fsm->accept(generator);
+        assert(false);
+    } catch (const std::invalid_argument&) {
+        assert(output.str().empty());
+    }
+
+    fsm->maps.front().states.front().transitions.front().name = "back";
+    output.setstate(std::ios::badbit);
+    try {
+        fsm->accept(generator);
+        assert(false);
+    } catch (const std::ios_base::failure&) {}
+}
+
+void test_conflicting_transition_parameters_are_rejected() {
+    const std::string source = R"SMC(%start Main::Ready
+%class Context
+%header context.h
+%map Main
+%%
+Ready { run(a: int) [a > 0] nil {} run(b: int) nil {} }
+%%
+)SMC";
+    smc::Diagnostics diagnostics;
+    smc::Parser parser(source, "conflict.sm", diagnostics);
+    const auto fsm = parser.parse();
+    assert(fsm);
+    smc::SyntaxChecker checker(diagnostics);
+    assert(!checker.check(*fsm));
+}
+
 } // namespace
 
 int main() {
@@ -231,4 +288,6 @@ int main() {
     test_duplicate_unconditional_transition_is_rejected();
     test_parser_rejects_malformed_typed_parameter_and_action();
     test_cross_map_destination_and_nested_parameter_type();
+    test_pop_and_generator_diagnostics();
+    test_conflicting_transition_parameters_are_rejected();
 }
