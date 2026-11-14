@@ -124,8 +124,8 @@ void test_editor_menu(const std::filesystem::path& directory) {
         require(!popups.empty() && popups[0].Window,
                 "C++ generation menu did not open");
         ImGuiWindow* menu = popups[0].Window;
-        click(find_item(menu, menu->GetID("Generate .hpp and .cpp"),
-                        "Generate .hpp and .cpp"));
+        click(find_item(menu, menu->GetID("generate .hpp and .cpp"),
+                        "generate .hpp and .cpp"));
     };
 
     generate_from_menu();

@@ -10,7 +10,7 @@ Ready
     wait nil {}
     call Ready/push(Other::Ready) { prepare(); }
     direct push(Ready) {}
-    back pop(done(1)) { cleanup(); }
+    back pop(done, 1) { cleanup(); }
     switch jump(Other::Done) {}
 }
 OtherState
@@ -26,5 +26,6 @@ Ready
 Done
 {
     reset Main::Ready {}
+    done(value: int) nil {}
 }
 %%

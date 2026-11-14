@@ -90,10 +90,10 @@ void testConversion() {
             "Synthetic default state unexpectedly had a source range");
     require(ast.roots.size() == 2, "AST tree omitted a map");
     const auto& main_map = ast.nodes[ast.roots[0]];
-    require(main_map.label == "Map: Main" && main_map.children.size() == 2,
+    require(main_map.label == "Main" && main_map.children.size() == 2,
             "AST map included a synthetic default state or omitted a state");
     const auto& ready = ast.nodes[main_map.children[0]];
-    require(ready.label == "State: Ready" && !ready.children.empty(),
+    require(ready.label == "Ready" && !ready.children.empty(),
             "AST tree did not nest transitions under their state");
     const auto& go = ast.nodes[ready.children[0]];
     require(go.source.kind == GraphObjectKind::transition &&
@@ -128,7 +128,7 @@ void testConversion() {
                 records[0].detail.find("editor.sm:") != std::string::npos,
             "Parser diagnostic metadata or location was lost");
     require(graph->clusters.size() == 2 && graph->nodes.size() == 6 &&
-                graph->edges.size() == 9, "Unexpected graph size");
+                graph->edges.size() == 10, "Unexpected graph size");
     require(graph->clusters[0].label == "Main" && graph->clusters[1].label == "Other",
             "Map labels not preserved");
     require(graph->clusters[0].nodes.size() == 3 &&
@@ -159,13 +159,15 @@ void testConversion() {
                 edges[4].label.find("nil/push(Ready)") != std::string::npos,
             "Direct push not represented");
     require(edges[5].to == graph->nodes[0].id &&
-                edges[5].label.find("pop(done(1)) [dynamic destination]") != std::string::npos,
+                edges[5].label.find("pop(1) [dynamic destination]") != std::string::npos,
             "Pop semantics not represented");
     require(edges[6].to == graph->nodes[4].id &&
                 edges[6].label.find("jump(Other::Done)") != std::string::npos,
             "Jump destination not represented");
     require(edges[7].from == graph->nodes[3].id && edges[7].to == graph->nodes[4].id &&
-                edges[8].to == graph->nodes[0].id, "Other map targets not resolved");
+                edges[8].to == graph->nodes[0].id &&
+                edges[9].from == graph->nodes[4].id && edges[9].to == graph->nodes[4].id,
+            "Other map targets or pop transition not resolved");
     const auto layout = dot_layout::DotLayout{}.layout(*graph);
     require(layout.nodes.size() == graph->nodes.size() &&
                 layout.edges.size() == graph->edges.size() &&
