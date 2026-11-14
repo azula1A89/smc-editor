@@ -22,7 +22,6 @@ void AppContext::initialize(std::string source_file) {
     autocomplete = std::make_unique<TrieAutoComplete>();
     autocomplete->Connect(editor.get());
     editor->SetLanguage(smc_editor::language());
-    editor->SetShowMiniMapEnabled(true);
 
     const auto contents = read_input_file(input_file, &log);
     if (contents)
