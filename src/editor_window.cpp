@@ -3,7 +3,9 @@
 
 #include <exception>
 #include <filesystem>
+#include <map>
 #include <string>
+#include <utility>
 
 #include <analysis.hpp>
 #include <app_context.hpp>
@@ -70,6 +72,38 @@ void render_ast_node(AppContext& app, const AstTreeView& ast, std::size_t index)
 }
 
 } // namespace
+
+std::vector<SourceErrorMarker> source_error_markers(
+    const smc::Diagnostics& diagnostics, std::string_view source_name,
+    std::size_t line_count) {
+    std::map<std::size_t, std::string> messages;
+    for (const auto& diagnostic : diagnostics) {
+        const auto& location = diagnostic.location;
+        if (diagnostic.severity != smc::DiagnosticSeverity::error ||
+            location.file != source_name || location.line == 0 || location.line > line_count)
+            continue;
+        auto& tooltip = messages[location.line - 1];
+        if (!tooltip.empty())
+            tooltip += '\n';
+        tooltip += "Column " + std::to_string(location.column) + ": " + diagnostic.message;
+    }
+
+    std::vector<SourceErrorMarker> markers;
+    markers.reserve(messages.size());
+    for (auto& [line, tooltip] : messages)
+        markers.push_back({line, std::move(tooltip)});
+    return markers;
+}
+
+void set_source_error_markers(
+    TextEditor& editor, const smc::Diagnostics& diagnostics, std::string_view source_name) {
+    editor.ClearMarkers();
+    for (const auto& marker : source_error_markers(
+             diagnostics, source_name, editor.GetLineCount())) {
+        editor.AddMarker(marker.line, IM_COL32(200, 45, 45, 160),
+                         IM_COL32(200, 45, 45, 55), marker.tooltip, marker.tooltip);
+    }
+}
 
 void select_graph_source(AppContext& app, const SourceSegment& source) {
     const auto start = editor_position_at_offset(
@@ -224,7 +258,7 @@ void render_editor_window(AppContext& app) {
     app.editor_text = app.editor->GetText();
     app.line_offsets = source_line_offsets(app.editor_text);
     if (app.coordinator)
-        app.coordinator->text_changed(AnalysisCoordinator::Clock::now());
+        app.coordinator->text_changed(AnalysisCoordinator::Clock::now(), app.editor.get());
     app.canvas_focus.reset();
 }
 

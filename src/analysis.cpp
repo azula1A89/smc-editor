@@ -461,13 +461,15 @@ std::optional<SourceSegment> source_range_for_focus(
 std::optional<dot_layout::DirectedGraph> make_graph_from_contents(
     const std::string& contents, const std::string& source_name, DiagnosticLog* log,
     std::vector<SourceSegment>* source_segments, std::vector<SourceSegment>* source_ranges,
-    AstTreeView* ast) {
+    AstTreeView* ast, smc::Diagnostics* source_diagnostics) {
     smc::Diagnostics diagnostics;
     smc::Parser parser(contents, source_name, diagnostics);
     const auto fsm = parser.parse();
     smc::SyntaxChecker checker(diagnostics);
     const bool syntax_valid = fsm && checker.check(*fsm, "c++");
     print_diagnostics(diagnostics, log);
+    if (source_diagnostics)
+        *source_diagnostics = std::move(diagnostics);
     if (!syntax_valid)
         return std::nullopt;
 
@@ -532,13 +534,15 @@ void AnalysisWorker::run() {
         }
 
         AnalysisResult result{job->revision, job->source.has_value()};
+        result.source_name = job->source_name;
         // Stage every diagnostic until the revision is accepted or discarded.
         DiagnosticLog diagnostics(std::numeric_limits<std::size_t>::max(), false);
         try {
             result.graph = job->source
                 ? make_graph_from_contents(*job->source, job->source_name,
                                            &diagnostics, &result.source_segments,
-                                           &result.source_ranges, &result.ast)
+                                           &result.source_ranges, &result.ast,
+                                           &result.source_diagnostics)
                 : std::optional<dot_layout::DirectedGraph>(std::move(job->graph));
             if (result.graph) {
                 apply_graph_preferences(*result.graph, job->graph_preferences);
@@ -568,7 +572,9 @@ void AnalysisWorker::run() {
 AnalysisCoordinator::AnalysisCoordinator(bool has_source, Clock::time_point now)
     : source_needs_analysis_(has_source), deadline_(now) {}
 
-void AnalysisCoordinator::text_changed(Clock::time_point now) {
+void AnalysisCoordinator::text_changed(Clock::time_point now, TextEditor* editor) {
+    if (editor)
+        editor->ClearMarkers();
     source_is_indexed_ = false;
     source_needs_analysis_ = true;
     deadline_ = now + std::chrono::milliseconds(500);
@@ -596,11 +602,13 @@ const AstTreeView& AnalysisCoordinator::ast() const {
 }
 
 void AnalysisCoordinator::accept(
-    AnalysisResult result, CanvasState& canvas, DiagnosticLog& log) {
+    AnalysisResult result, CanvasState& canvas, DiagnosticLog& log, TextEditor* editor) {
     if (active_revision_ && *active_revision_ == result.revision)
         active_revision_.reset();
     if (result.revision != revision_)
         return;
+    if (result.source_job && editor)
+        set_source_error_markers(*editor, result.source_diagnostics, result.source_name);
     for (auto& record : result.diagnostics)
         log.publish(std::move(record));
     if (result.graph && result.layout) {

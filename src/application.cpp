@@ -32,7 +32,7 @@ void render_frame(GLFWwindow* window) {
     render_editor_window(*app);
 
     if (auto result = app->worker->take_result())
-        app->coordinator->accept(std::move(*result), app->canvas, app->log);
+        app->coordinator->accept(std::move(*result), app->canvas, app->log, app->editor.get());
 
     update_graph_focus(*app);
 

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <TextEditor.h>
+#include <smc/diagnostic.hpp>
 
 #include <app_context.hpp>
 
@@ -43,7 +44,20 @@ struct AnalysisResult {
     std::vector<SourceSegment> source_ranges;
     AstTreeView ast;
     std::vector<LogRecord> diagnostics;
+    std::string source_name;
+    smc::Diagnostics source_diagnostics;
 };
+
+struct SourceErrorMarker {
+    std::size_t line;
+    std::string tooltip;
+};
+
+std::vector<SourceErrorMarker> source_error_markers(
+    const smc::Diagnostics& diagnostics, std::string_view source_name,
+    std::size_t line_count);
+void set_source_error_markers(
+    TextEditor& editor, const smc::Diagnostics& diagnostics, std::string_view source_name);
 
 class AnalysisWorker {
 public:
@@ -72,13 +86,15 @@ public:
     using Clock = std::chrono::steady_clock;
 
     explicit AnalysisCoordinator(bool has_source, Clock::time_point now);
-    void text_changed(Clock::time_point now);
+    void text_changed(Clock::time_point now, TextEditor* editor = nullptr);
     void settings_changed();
     bool source_is_indexed() const;
     const std::vector<SourceSegment>& source_segments() const;
     const std::vector<SourceSegment>& source_ranges() const;
     const AstTreeView& ast() const;
-    void accept(AnalysisResult result, CanvasState& canvas, DiagnosticLog& log);
+    void accept(
+        AnalysisResult result, CanvasState& canvas, DiagnosticLog& log,
+        TextEditor* editor = nullptr);
     std::optional<AnalysisJob> next_job(
         Clock::time_point now, const std::string& source, const std::string& source_name,
         CanvasState& canvas, const UserSettings& settings = UserSettings{});
@@ -102,7 +118,8 @@ std::optional<dot_layout::DirectedGraph> make_graph_from_contents(
     const std::string& contents, const std::string& source_name, DiagnosticLog* log = nullptr,
     std::vector<SourceSegment>* source_segments = nullptr,
     std::vector<SourceSegment>* source_ranges = nullptr,
-    AstTreeView* ast = nullptr);
+    AstTreeView* ast = nullptr,
+    smc::Diagnostics* source_diagnostics = nullptr);
 std::optional<std::string> read_input_file(
     const std::string& input_file, DiagnosticLog* log = nullptr);
 std::optional<GraphFocus> focus_at_offset(

@@ -65,7 +65,9 @@ void test_worker() {
             "Worker did not restore saved node and edge preferences");
     worker.submit({2, std::string("%unknown\n"), file, {}, options});
     auto invalid = wait_for(worker, 2);
-    require(!invalid.graph && !invalid.layout && !invalid.diagnostics.empty(),
+    require(!invalid.graph && !invalid.layout && !invalid.diagnostics.empty() &&
+                invalid.source_name == file && !invalid.source_diagnostics.empty() &&
+                invalid.source_diagnostics[0].location.line == 1,
             "Worker did not report invalid input");
     worker.submit({3, std::nullopt, file, *valid.graph, options});
     auto relayout = wait_for(worker, 3);
@@ -91,6 +93,128 @@ void test_cached_offsets() {
             "Cached UTF-8/CRLF position is incorrect");
     require(editor_offset_at_position(text, offsets, TextEditor::DocPos(2, 0)) == text.size(),
             "Cached final line position is incorrect");
+}
+
+void test_error_markers() {
+    using Severity = smc::DiagnosticSeverity;
+    DiagnosticLog parse_log(DiagnosticLog::default_capacity, false);
+    smc::Diagnostics parsed;
+    require(!make_graph_from_contents("\n%unknown\n", "test.sm", &parse_log,
+                                      nullptr, nullptr, nullptr, &parsed) &&
+                !parsed.empty() && parsed[0].severity == Severity::error &&
+                parsed[0].location.file == "test.sm" && parsed[0].location.line == 2 &&
+                parsed[0].location.column == 1 && !parsed[0].message.empty() &&
+                !parse_log.snapshot().records.empty(),
+            "Structured parser diagnostic or existing log was lost");
+    const std::string invalid_semantics =
+        "%start Main::Missing\n%class Example\n%map Main\n%%\nReady\n{\n}\n%%\n";
+    require(!make_graph_from_contents(invalid_semantics, "test.sm", &parse_log,
+                                      nullptr, nullptr, nullptr, &parsed) &&
+                parsed.size() >= 2 && parsed[0].location.line == 1 &&
+                parsed[0].message.find("%header") != std::string::npos &&
+                parsed[1].message.find("does not exist") != std::string::npos,
+            "Structured syntax-checker diagnostics were not retained");
+    AnalysisWorker worker;
+    worker.submit({1, std::string("\n%unknown\n"), "test.sm", {}, {}});
+    auto worker_result = wait_for(worker, 1);
+    require(!worker_result.graph && worker_result.source_name == "test.sm" &&
+                !worker_result.source_diagnostics.empty() &&
+                worker_result.source_diagnostics[0].location.line == 2 &&
+                !worker_result.diagnostics.empty(),
+            "Worker did not propagate structured source errors and logs");
+
+    const smc::Diagnostics diagnostics{
+        {Severity::error, {"test.sm", 2, 3}, "first error"},
+        {Severity::error, {"test.sm", 2, 8}, "second error"},
+        {Severity::warning, {"test.sm", 1, 1}, "warning"},
+        {Severity::error, {"other.sm", 1, 1}, "other file"},
+        {Severity::error, {"test.sm", 0, 1}, "invalid line"},
+        {Severity::error, {"test.sm", 4, 1}, "past end"},
+        {Severity::error, {"test.sm", 3, 1}, "last line"}};
+    const auto markers = source_error_markers(diagnostics, "test.sm", 3);
+    require(markers.size() == 2 && markers[0].line == 1 &&
+                markers[0].tooltip == "Column 3: first error\nColumn 8: second error" &&
+                markers[1].line == 2 && markers[1].tooltip == "Column 1: last line",
+            "Source errors were not filtered, grouped and mapped to editor lines");
+
+    TextEditor editor;
+    editor.SetText("\n%unknown\n");
+    set_source_error_markers(editor, diagnostics, "test.sm");
+    require(editor.HasMarkers(), "Valid source errors did not create editor markers");
+    set_source_error_markers(editor, {}, "test.sm");
+    require(!editor.HasMarkers(), "Empty diagnostics did not clear editor markers");
+
+    using namespace std::chrono_literals;
+    const auto start = AnalysisCoordinator::Clock::time_point{};
+    AnalysisCoordinator coordinator(true, start);
+    CanvasState canvas;
+    DiagnosticLog log(DiagnosticLog::default_capacity, false);
+    auto first = coordinator.next_job(start, editor.GetText(), "test.sm", canvas);
+    require(first && first->source, "Source analysis was not scheduled");
+    worker_result.revision = first->revision;
+    coordinator.accept(std::move(worker_result), canvas, log, &editor);
+    require(editor.HasMarkers(), "Accepted source errors did not mark the editor");
+
+    auto relayout = coordinator.next_job(start, editor.GetText(), "test.sm", canvas);
+    require(relayout && !relayout->source, "Layout-only job was not scheduled");
+    AnalysisResult layout_result{relayout->revision, false};
+    layout_result.graph = canvas.graph;
+    layout_result.layout = dot_layout::LayoutResult{};
+    coordinator.accept(std::move(layout_result), canvas, log, &editor);
+    require(editor.HasMarkers(), "Layout-only result cleared source error markers");
+
+    coordinator.text_changed(start, &editor);
+    require(!editor.HasMarkers(), "Editing did not immediately clear error markers");
+    auto pending = coordinator.next_job(start + 500ms, editor.GetText(), "test.sm", canvas);
+    require(pending && pending->source, "Changed source was not scheduled");
+    coordinator.text_changed(start + 600ms, &editor);
+    AnalysisResult stale{pending->revision, true};
+    stale.source_name = "test.sm";
+    stale.source_diagnostics = diagnostics;
+    coordinator.accept(std::move(stale), canvas, log, &editor);
+    require(!editor.HasMarkers(), "Stale analysis restored error markers");
+    auto latest = coordinator.next_job(start + 1100ms, editor.GetText(), "test.sm", canvas);
+    require(latest && latest->source, "Latest source was not scheduled");
+    AnalysisResult success{latest->revision, true};
+    success.graph = dot_layout::DirectedGraph{};
+    success.layout = dot_layout::LayoutResult{};
+    set_source_error_markers(editor, diagnostics, "test.sm");
+    coordinator.accept(std::move(success), canvas, log, &editor);
+    require(!editor.HasMarkers(), "Successful source analysis did not clear error markers");
+}
+
+void test_error_marker_rendering() {
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    io.DisplaySize = ImVec2(900, 600);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+    io.Fonts->AddFontFromMemoryCompressedTTF(
+        static_cast<const void*>(&dejavu), dejavuSize, 15.0f);
+    TextEditor editor;
+    editor.SetText("first\nsecond\nthird");
+    set_source_error_markers(editor,
+        {{smc::DiagnosticSeverity::error, {"test.sm", 2, 1}, "error"}}, "test.sm");
+    bool line_number = false;
+    bool text = false;
+    for (int frame = 0; frame < 2; ++frame) {
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(900, 600), ImGuiCond_Always);
+        ImGui::Begin("Marker test");
+        editor.Render("Source", ImVec2(0, 0));
+        ImGui::End();
+        ImGui::Render();
+        for (const auto* draw_list : ImGui::GetDrawData()->CmdLists) {
+            for (const auto& vertex : draw_list->VtxBuffer) {
+                line_number |= vertex.col == IM_COL32(200, 45, 45, 160);
+                text |= vertex.col == IM_COL32(200, 45, 45, 55);
+            }
+        }
+    }
+    ImGui::DestroyContext();
+    require(line_number && text, "Error marker backgrounds were not rendered");
 }
 
 void test_coordinator() {
@@ -378,7 +502,14 @@ int main(int argc, char** argv) {
             benchmark(argv[2]);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--error-markers") {
+            test_error_markers();
+            test_error_marker_rendering();
+            return 0;
+        }
         test_cached_offsets();
+        test_error_markers();
+        test_error_marker_rendering();
         test_coordinator();
         test_worker();
         test_layout_cache_and_culling();
