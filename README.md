@@ -67,7 +67,7 @@ SMC 解析和语法校验错误会以红色背景标记编辑器中的行号和�
 
 在画布上单击节点、边（包括曲线和标签）或 cluster 的边框、标题，可高亮命中元素并在编辑器中选中其完整源码范围；边选中所属 transition 的完整范围，但只高亮被点击的 edge。编辑器会滚动到选区开头，画布不会因此移动；再次操作编辑器时恢复光标驱动的联动。点击空白处保持原选择，拖拽仍用于平移。源码映射过期或元素没有对应源码（例如自动生成的 `Default` 节点、内置示例图）时，只改变画布焦点，不改变源码选区。
 
-编辑器的 `ast` 菜单按 state map、state、transition、guard 层级提供快捷跳转；点击节点选中其完整源码并聚焦对应画布元素，transition 聚焦全部 guard edges，guard 聚焦单条 edge。没有源码范围的合成节点不显示，源码修改后菜单暂不可用，直到最新分析成功。`C++` 菜单根据当前编辑器内容生成同目录下同名 `.hpp` 和 `.cpp`；若输出文件已存在，需确认后才覆盖，生成或写入失败时会在日志窗口显示诊断。
+编辑器的 `ast` 菜单按 state map、state、transition、guard 层级提供快捷跳转；点击节点选中其完整源码并聚焦对应画布元素，transition 聚焦全部 guard edges，guard 聚焦单条 edge。没有源码范围的合成节点不显示，源码修改后菜单暂不可用，直到最新分析成功。`file` 菜单使用 [ImGuiFileSelector](https://github.com/goossens/ImGuiFileSelector)（[MIT 许可](https://github.com/goossens/ImGuiFileSelector/blob/v1.93.0/LICENSE)）打开 `.sm` 文件；每次选择 `generate .hpp and .cpp` 时，选择输出目录（默认为当前 `.sm` 文件所在目录），根据当前编辑器内容生成同名 `.hpp` 和 `.cpp`。取消不会生成文件；若输出文件已存在，需确认后才覆盖，生成或写入失败时会在日志窗口显示诊断。
 
 日志接口位于 [include/log.hpp](include/log.hpp)：`DiagnosticLog::write` 接收等级、来源和详情，并记录产生时间；写入、清空和快照均可跨线程安全调用。默认保留最近 10,000 条记录，超出时淘汰最旧记录；同时输出到标准错误。后台分析的诊断仅在对应结果被接受时发布，过期结果不会显示或输出。状态窗口按 Debug、Info、Warning、Error 着色，可分别开关等级并按来源的大小写敏感子串过滤；空来源过滤显示全部。多行记录计为一条，窗口按行裁剪渲染；Clear 清空历史，过滤不会删除记录。
 

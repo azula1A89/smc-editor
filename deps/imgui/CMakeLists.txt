@@ -6,6 +6,12 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(imgui)
 
 FetchContent_Declare(
+    imgui_file_selector
+    URL https://github.com/goossens/ImGuiFileSelector/archive/refs/tags/v1.93.0.zip
+)
+FetchContent_MakeAvailable(imgui_file_selector)
+
+FetchContent_Declare(
     color_te
     URL https://github.com/goossens/ImGuiColorTextEdit/archive/refs/tags/v1.93.0.zip
 )
@@ -19,6 +25,19 @@ set(color_te_SOURCE_DIR "${CMAKE_CURRENT_BINARY_DIR}/color_te_patched")
 file(COPY "${color_te_original_source_dir}/" DESTINATION "${color_te_SOURCE_DIR}"
     PATTERN "TextEditor.h" EXCLUDE PATTERN "TextEditor.cpp" EXCLUDE)
 include("${CMAKE_CURRENT_SOURCE_DIR}/semantic_editor_patch.cmake")
+
+# Some platforms cannot convert all filesystem names to wide strings. Keep the
+# directory usable and fall back to byte ordering for those names.
+file(READ "${imgui_file_selector_SOURCE_DIR}/FileSelector.cpp" selector_source)
+replace_once(selector_source
+    "auto sortString = entry.path.filename().generic_wstring();"
+    "std::wstring sortString;\n\t\t\t\ttry {\n\t\t\t\t\tsortString = entry.path.filename().generic_wstring();\n\t\t\t\t} catch (const std::filesystem::filesystem_error&) {\n\t\t\t\t\tfor (unsigned char byte : pathToString(entry.path.filename()))\n\t\t\t\t\t\tsortString.push_back(byte);\n\t\t\t\t}")
+set(selector_patched_source "${CMAKE_CURRENT_BINARY_DIR}/FileSelector.cpp")
+write_if_changed("${selector_patched_source}" "${selector_source}")
+
+add_library(imgui_file_selector STATIC ${selector_patched_source})
+target_include_directories(imgui_file_selector PUBLIC ${imgui_file_selector_SOURCE_DIR})
+target_link_libraries(imgui_file_selector PUBLIC imgui)
 
 if(NOT TARGET imgui)
     add_library(imgui STATIC

@@ -1,8 +1,7 @@
 #include <imgui.h>
 #include <TextEditor.h>
+#include <FileSelector.h>
 
-#include <algorithm>
-#include <cstring>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -16,20 +15,6 @@
 #include <ui_windows.hpp>
 
 namespace {
-
-constexpr std::size_t file_path_buffer_size = 4096;
-char open_file_path[file_path_buffer_size] = {};
-std::filesystem::path browse_directory;
-bool open_file_dialog_requested = false;
-
-bool set_path_buffer(char* buffer, std::size_t size, const std::string& path) {
-    if (path.size() >= size) {
-        buffer[0] = '\0';
-        return false;
-    }
-    std::memcpy(buffer, path.c_str(), path.size() + 1);
-    return true;
-}
 
 void log_cpp_generation_success(AppContext& app, const CppGenerationFiles& files) {
     app.log.write(LogLevel::info, "C++ generator",
@@ -81,79 +66,54 @@ void save_source_file(AppContext& app) {
     app.log.write(LogLevel::info, "File", "Saved '" + app.input_file + "'");
 }
 
-void render_file_open_dialog(AppContext& app) {
-    if (open_file_dialog_requested) {
-        ImGui::OpenPopup("Open .sm file");
-        open_file_dialog_requested = false;
+void request_file_selector(AppContext& app, bool select_directory) {
+    try {
+        auto& selector = FileSelector::Instance();
+        if (selector.IsOpen()) {
+            app.log.write(LogLevel::error, "File", "A file selector is already open.");
+            return;
+        }
+        auto directory = std::filesystem::path(app.input_file).parent_path();
+        if (directory.empty())
+            directory = ".";
+        if (!selector.SetCurrentPath(directory)) {
+            app.log.write(LogLevel::error, "File",
+                          "Cannot open folder '" + directory.string() + "'");
+            return;
+        }
+        const bool opened = select_directory ? selector.SelectDirectory() : selector.OpenFile(".sm");
+        if (!opened)
+            app.log.write(LogLevel::error, "File", "Cannot open file selector.");
+    } catch (const std::exception& error) {
+        app.log.write(LogLevel::error, "File", error.what());
     }
+}
 
-    bool open = true;
-    if (!ImGui::BeginPopupModal(
-            "Open .sm file", &open, ImGuiWindowFlags_AlwaysAutoResize))
+void render_file_selector(AppContext& app) {
+    auto& selector = FileSelector::Instance();
+    if (!selector.Render())
         return;
-
-    ImGui::InputText("File path", open_file_path, sizeof(open_file_path));
-    ImGui::TextWrapped("Browse a folder below or enter a .sm file path.");
-    ImGui::TextWrapped("Folder: %s", browse_directory.string().c_str());
-    if (ImGui::Button("Up") && browse_directory.has_parent_path()) {
-        browse_directory = browse_directory.parent_path();
-        open_file_path[0] = '\0';
-    }
-    ImGui::BeginChild("##smFileList", ImVec2(520.0f, 240.0f), true);
-
-    std::vector<std::filesystem::path> directories;
-    std::vector<std::filesystem::path> files;
-    std::error_code error;
-    std::filesystem::directory_iterator iterator(browse_directory, error);
-    const std::filesystem::directory_iterator end;
-    while (!error && iterator != end) {
-        const auto entry = *iterator;
-        std::error_code entry_error;
-        if (entry.is_directory(entry_error)) {
-            directories.push_back(entry.path());
-        } else if (!entry_error && entry.is_regular_file(entry_error) &&
-                   entry.path().extension() == ".sm") {
-            files.push_back(entry.path());
-        }
-        iterator.increment(error);
-    }
-
-    const auto sort_by_filename = [](const auto& left, const auto& right) {
-        return left.filename().string() < right.filename().string();
-    };
-    std::sort(directories.begin(), directories.end(), sort_by_filename);
-    std::sort(files.begin(), files.end(), sort_by_filename);
-
-    if (error) {
-        ImGui::TextWrapped("Cannot list this folder: %s", error.message().c_str());
-    } else {
-        for (const auto& directory : directories) {
-            const auto label = "[" + directory.filename().string() + "]";
-            if (ImGui::Selectable(label.c_str())) {
-                browse_directory = directory;
-                open_file_path[0] = '\0';
+    if (selector.SelectedOpenFile()) {
+        if (!open_source_file(app, selector.GetSelectedPath()))
+            request_file_selector(app, false);
+    } else if (selector.SelectedDirectory()) {
+        try {
+            auto files = generate_cpp_files(app.editor->GetText(), app.input_file);
+            files.header_path = selector.GetSelectedPath() / files.header_path.filename();
+            files.source_path = selector.GetSelectedPath() / files.source_path.filename();
+            if (std::filesystem::exists(files.header_path) ||
+                std::filesystem::exists(files.source_path)) {
+                app.pending_cpp_generation = std::move(files);
+                ImGui::OpenPopup("Overwrite generated C++ files?");
+            } else {
+                write_cpp_files(files);
+                log_cpp_generation_success(app, files);
             }
-        }
-        for (const auto& file : files) {
-            const auto label = file.filename().string();
-            if (ImGui::Selectable(label.c_str())) {
-                if (!set_path_buffer(open_file_path, sizeof(open_file_path), file.string()))
-                    app.log.write(LogLevel::error, "File", "Selected file path is too long.");
-            }
+        } catch (const std::exception& error) {
+            app.pending_cpp_generation.reset();
+            app.log.write(LogLevel::error, "C++ generator", error.what());
         }
     }
-    ImGui::EndChild();
-
-    if (ImGui::Button("Open")) {
-        if (open_source_file(app, std::filesystem::path(open_file_path)))
-            ImGui::CloseCurrentPopup();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Cancel"))
-        ImGui::CloseCurrentPopup();
-    if (!open)
-        ImGui::CloseCurrentPopup();
-    ImGui::EndPopup();
 }
 
 void render_cpp_generation_confirmation(AppContext& app) {
@@ -259,44 +219,20 @@ void select_graph_source(AppContext& app, const SourceSegment& source) {
 void render_editor_window(AppContext& app) {
     if (!ImGui::Begin("SMC Editor", nullptr, ImGuiWindowFlags_MenuBar)) {
         ImGui::End();
-        render_file_open_dialog(app);
+        render_file_selector(app);
         render_cpp_generation_confirmation(app);
         return;
     }
 
-    bool open_cpp_overwrite_popup = false;
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("file")) {
-            if (ImGui::MenuItem("open")) {
-                const auto initial_path = app.input_file;
-                if (!set_path_buffer(open_file_path, sizeof(open_file_path), initial_path))
-                    app.log.write(LogLevel::error, "File", "Current file path is too long.");
-                browse_directory = std::filesystem::path(initial_path).parent_path();
-                if (browse_directory.empty())
-                    browse_directory = ".";
-                open_file_dialog_requested = true;
-            }
+            if (ImGui::MenuItem("open"))
+                request_file_selector(app, false);
             if (ImGui::MenuItem("save"))
                 save_source_file(app);
             if (ImGui::BeginMenu("generate")) {
-                if (ImGui::MenuItem("generate .hpp and .cpp")) {
-                    try {
-                        app.pending_cpp_generation = generate_cpp_files(
-                            app.editor->GetText(), app.input_file);
-                        const auto& files = *app.pending_cpp_generation;
-                        if (std::filesystem::exists(files.header_path) ||
-                            std::filesystem::exists(files.source_path)) {
-                            open_cpp_overwrite_popup = true;
-                        } else {
-                            write_cpp_files(files);
-                            log_cpp_generation_success(app, files);
-                            app.pending_cpp_generation.reset();
-                        }
-                    } catch (const std::exception& error) {
-                        app.pending_cpp_generation.reset();
-                        app.log.write(LogLevel::error, "C++ generator", error.what());
-                    }
-                }
+                if (ImGui::MenuItem("generate .hpp and .cpp"))
+                    request_file_selector(app, true);
                 ImGui::EndMenu();
             }
             ImGui::EndMenu();
@@ -396,15 +332,13 @@ void render_editor_window(AppContext& app) {
 		}
         ImGui::EndMenuBar();
     }
-    if (open_cpp_overwrite_popup)
-        ImGui::OpenPopup("Overwrite generated C++ files?");
-    render_file_open_dialog(app);
-    render_cpp_generation_confirmation(app);
     const bool changed = app.editor->Render("Source", ImVec2(0.0f, 0.0f));
     if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
         ImGui::IsMouseClicked(ImGuiMouseButton_Left))
         app.canvas_focus.reset();
     ImGui::End();
+    render_file_selector(app);
+    render_cpp_generation_confirmation(app);
     if (!changed)
         return;
 

@@ -34,7 +34,7 @@ add_library(app_ui STATIC
   src/log_window.cpp
 )
 target_include_directories(app_ui PUBLIC include)
-target_link_libraries(app_ui PUBLIC app_log dot_layout imgui glew_s smc_core Threads::Threads)
+target_link_libraries(app_ui PUBLIC app_log dot_layout imgui imgui_file_selector glew_s smc_core Threads::Threads)
 
 add_executable(dot_layout_demo src/main.cpp src/application.cpp)
 target_link_libraries(dot_layout_demo PRIVATE app_ui)
