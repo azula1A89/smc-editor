@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <string>
 #include <utility>
 
@@ -24,6 +25,9 @@ void render_frame(GLFWwindow* window) {
     auto* app = static_cast<AppContext*>(glfwGetWindowUserPointer(window));
     if (!app)
         return;
+
+    const auto title = std::filesystem::path(app->input_file).filename().string();
+    glfwSetWindowTitle(window, title.empty() ? "SMC Editor" : title.c_str());
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();

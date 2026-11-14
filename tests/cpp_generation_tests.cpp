@@ -118,13 +118,18 @@ void test_editor_menu(const std::filesystem::path& directory) {
     const auto generate_from_menu = [&] {
         editor_frame(550, 350);
         ImGuiWindow* editor_window = ImGui::FindWindowByName("SMC Editor");
-        const ImRect bar = editor_window->MenuBarRect();
-        click(ImVec2(bar.Min.x + 70.0f, (bar.Min.y + bar.Max.y) * 0.5f));
+        const auto menu_bar_id = editor_window->GetID("##MenuBar");
+        const auto file_menu_id = ImHashStr("file", 0, menu_bar_id);
+        click(find_item(editor_window, file_menu_id, "file"));
         auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
         require(!popups.empty() && popups[0].Window,
-                "C++ generation menu did not open");
-        ImGuiWindow* menu = popups[0].Window;
-        click(find_item(menu, menu->GetID("generate .hpp and .cpp"),
+                "File menu did not open");
+        ImGuiWindow* file_menu = popups[0].Window;
+        click(find_item(file_menu, file_menu->GetID("generate"), "generate"));
+        require(popups.size() > 1 && popups[1].Window,
+                "Generate submenu did not open");
+        ImGuiWindow* generate_menu = popups[1].Window;
+        click(find_item(generate_menu, generate_menu->GetID("generate .hpp and .cpp"),
                         "generate .hpp and .cpp"));
     };
 
