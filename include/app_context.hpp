@@ -50,9 +50,9 @@ struct DiagnosticViewState {
     bool initialized = false;
     std::vector<LogRecord> records;
     std::vector<Line> lines;
-    bool levels[4] = {true, true, true, true};
+    bool levels[4] = {false, true, true, true};
     char source_filter[256] = {};
-    bool measured_levels[4] = {true, true, true, true};
+    bool measured_levels[4] = {false, true, true, true};
     std::string measured_source_filter;
     ImFont* measured_font = nullptr;
     float measured_font_size = 0.0f;
