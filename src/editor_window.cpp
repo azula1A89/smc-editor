@@ -127,6 +127,87 @@ void render_editor_window(AppContext& app) {
             }
             ImGui::EndMenu();
         }
+		if (ImGui::BeginMenu("options")) {
+			if (ImGui::BeginMenu("Tab Size")) {
+				if (ImGui::MenuItem("1")) { app.editor->SetTabSize(1); }
+				if (ImGui::MenuItem("2")) { app.editor->SetTabSize(2); }
+				if (ImGui::MenuItem("4")) { app.editor->SetTabSize(4); }
+				if (ImGui::MenuItem("8")) { app.editor->SetTabSize(8); }
+				ImGui::EndMenu();
+			}
+
+			if (ImGui::BeginMenu("Line Spacing")) {
+				if (ImGui::MenuItem("1.0")) { app.editor->SetLineSpacing(1.0f); }
+				if (ImGui::MenuItem("1.25")) { app.editor->SetLineSpacing(1.25f); }
+				if (ImGui::MenuItem("1.5")) { app.editor->SetLineSpacing(1.5f); }
+				if (ImGui::MenuItem("1.75")) { app.editor->SetLineSpacing(1.75f); }
+				if (ImGui::MenuItem("2.0")) { app.editor->SetLineSpacing(2.0f); }
+				ImGui::EndMenu();
+			}
+
+			if (ImGui::BeginMenu("MiniMap Columns")) {
+				int width = static_cast<int>(app.editor->GetMiniMapColumns());
+				if (ImGui::SliderInt("##miniMapColumns", &width, 0, 200)) { app.editor->SetMiniMapColumns(static_cast<size_t>(width)); }
+				ImGui::EndMenu();
+			}
+
+			if (ImGui::BeginMenu("Color Palette")) {
+				if (ImGui::MenuItem("Dark")) {
+                    ImGui::StyleColorsDark();
+                    app.editor->SetPalette(app.editor->GetDarkPalette());
+                }
+				if (ImGui::MenuItem("Light")) {
+                    ImGui::StyleColorsLight();
+                    app.editor->SetPalette(app.editor->GetLightPalette());
+                }
+				ImGui::EndMenu();
+			}
+
+			ImGui::Separator();
+
+			bool flag;
+			flag = app.editor->IsReadOnlyEnabled(); if (ImGui::MenuItem("Read Only", nullptr, &flag)) { app.editor->SetReadOnlyEnabled(flag); };
+			flag = app.editor->IsCaretsVisible(); if (ImGui::MenuItem("Carets Visible", nullptr, &flag)) { app.editor->SetCaretsVisible(flag); };
+			flag = app.editor->IsOverwriteEnabled(); if (ImGui::MenuItem("Overwrite", nullptr, &flag)) { app.editor->SetOverwriteEnabled(flag); };
+			flag = app.editor->IsWordWrapEnabled(); if (ImGui::MenuItem("Word Wrap", nullptr, &flag)) { app.editor->SetWordWrapEnabled(flag); };
+			flag = app.editor->IsLineFoldingEnabled(); if (ImGui::MenuItem("Line Folding", nullptr, &flag)) { app.editor->SetLineFoldingEnabled(flag); };
+			flag = app.editor->IsAutoIndentEnabled(); if (ImGui::MenuItem("Auto Indent", nullptr, &flag)) { app.editor->SetAutoIndentEnabled(flag); };
+			flag = app.editor->IsInsertSpacesOnTabs(); if (ImGui::MenuItem("Insert Spaces on Tabs", nullptr, &flag)) { app.editor->SetInsertSpacesOnTabs(flag); };
+			flag = app.editor->IsShowWhitespacesEnabled(); if (ImGui::MenuItem("Show Whitespaces", nullptr, &flag)) { app.editor->SetShowWhitespacesEnabled(flag); };
+			flag = app.editor->IsShowSpacesEnabled(); if (ImGui::MenuItem("Show Spaces", nullptr, &flag)) { app.editor->SetShowSpacesEnabled(flag); };
+			flag = app.editor->IsShowTabsEnabled(); if (ImGui::MenuItem("Show Tabs", nullptr, &flag)) { app.editor->SetShowTabsEnabled(flag); };
+			flag = app.editor->IsShowLineNumbersEnabled(); if (ImGui::MenuItem("Show Line Numbers", nullptr, &flag)) { app.editor->SetShowLineNumbersEnabled(flag); };
+			flag = app.editor->IsShowCurrentLineHighlightEnabled(); if (ImGui::MenuItem("Show Current Line Highlight", nullptr, &flag)) { app.editor->SetShowCurrentLineHighlightEnabled(flag); };
+			flag = app.editor->IsShowingMatchingBrackets(); if (ImGui::MenuItem("Show Matching Brackets", nullptr, &flag)) { app.editor->SetShowMatchingBrackets(flag); };
+			flag = app.editor->IsCompletingPairedGlyphs(); if (ImGui::MenuItem("Complete Matching Glyphs", nullptr, &flag)) { app.editor->SetCompletePairedGlyphs(flag); };
+			flag = app.editor->IsShowMiniMapEnabled(); if (ImGui::MenuItem("Show Mini Map", nullptr, &flag)) { app.editor->SetShowMiniMapEnabled(flag); };
+			flag = app.editor->IsShowScrollbarMiniMapEnabled(); if (ImGui::MenuItem("Show Scrollbar Mini Map", nullptr, &flag)) { app.editor->SetShowScrollbarMiniMapEnabled(flag); };
+			flag = app.editor->IsShowPanScrollIndicatorEnabled(); if (ImGui::MenuItem("Show Pan/Scroll Indicator", nullptr, &flag)) { app.editor->SetShowPanScrollIndicatorEnabled(flag); };
+			flag = app.editor->IsMiddleMousePanMode(); if (ImGui::MenuItem("Middle Mouse Pan Mode", nullptr, &flag)) { if (flag) app.editor->SetMiddleMousePanMode(); else app.editor->SetMiddleMouseScrollMode(); };
+			flag = app.editor->IsFindReplaceEnabled(); if (ImGui::MenuItem("Find/Replace Enabled", nullptr, &flag)) { app.editor->SetFindReplaceEnabled(flag); };
+
+			ImGui::Separator();
+
+			if (ImGui::BeginMenu("Line Number Left Margin")) {
+				int margin = static_cast<int>(app.editor->GetLineNumberLeftMargin());
+				if (ImGui::SliderInt("##margin", &margin, 0, 4)) { app.editor->SetLineNumberLeftMargin(static_cast<size_t>(margin)); }
+				ImGui::EndMenu();
+			}
+
+			if (ImGui::BeginMenu("Decoration Left Margin")) {
+				int margin = static_cast<int>(app.editor->GetDecorationLeftMargin());
+				if (ImGui::SliderInt("##margin", &margin, 0, 4)) { app.editor->SetDecorationLeftMargin(static_cast<size_t>(margin)); }
+				ImGui::EndMenu();
+			}
+
+			if (ImGui::BeginMenu("Text Left Margin")) {
+				int margin = static_cast<int>(app.editor->GetTextLeftMargin());
+				if (ImGui::SliderInt("##margin", &margin, 0, 4)) { app.editor->SetTextLeftMargin(static_cast<size_t>(margin)); }
+				ImGui::EndMenu();
+			}
+
+			ImGui::EndMenu();
+		}
         ImGui::EndMenuBar();
     }
     if (open_cpp_overwrite_popup)
