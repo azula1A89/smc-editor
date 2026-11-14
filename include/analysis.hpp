@@ -35,6 +35,14 @@ struct AstTreeView {
     std::vector<std::size_t> roots;
 };
 
+enum class SemanticKind { state_map, state, transition };
+
+struct SemanticRange {
+    std::size_t begin;
+    std::size_t end;
+    SemanticKind kind;
+};
+
 struct AnalysisResult {
     std::uint64_t revision;
     bool source_job;
@@ -46,6 +54,7 @@ struct AnalysisResult {
     std::vector<LogRecord> diagnostics;
     std::string source_name;
     smc::Diagnostics source_diagnostics;
+    std::optional<std::vector<SemanticRange>> semantic_ranges;
 };
 
 struct SourceErrorMarker {
@@ -119,7 +128,8 @@ std::optional<dot_layout::DirectedGraph> make_graph_from_contents(
     std::vector<SourceSegment>* source_segments = nullptr,
     std::vector<SourceSegment>* source_ranges = nullptr,
     AstTreeView* ast = nullptr,
-    smc::Diagnostics* source_diagnostics = nullptr);
+    smc::Diagnostics* source_diagnostics = nullptr,
+    std::optional<std::vector<SemanticRange>>* semantic_ranges = nullptr);
 std::optional<std::string> read_input_file(
     const std::string& input_file, DiagnosticLog* log = nullptr);
 std::optional<GraphFocus> focus_at_offset(

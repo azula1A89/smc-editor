@@ -14,6 +14,12 @@ if(NOT color_te_POPULATED)
     FetchContent_Populate(color_te)
 endif()
 
+set(color_te_original_source_dir "${color_te_SOURCE_DIR}")
+set(color_te_SOURCE_DIR "${CMAKE_CURRENT_BINARY_DIR}/color_te_patched")
+file(COPY "${color_te_original_source_dir}/" DESTINATION "${color_te_SOURCE_DIR}"
+    PATTERN "TextEditor.h" EXCLUDE PATTERN "TextEditor.cpp" EXCLUDE)
+include("${CMAKE_CURRENT_SOURCE_DIR}/semantic_editor_patch.cmake")
+
 if(NOT TARGET imgui)
     add_library(imgui STATIC
         ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp

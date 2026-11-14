@@ -20,6 +20,37 @@ std::string trim(std::string value) {
     return std::string(begin, end);
 }
 
+SourceLocation advance_location(SourceLocation location, std::string_view text) {
+    bool previous_cr = false;
+    for (const char ch : text) {
+        if (ch == '\r') {
+            ++location.line;
+            location.column = 1;
+            previous_cr = true;
+        } else if (ch == '\n') {
+            if (!previous_cr)
+                ++location.line;
+            location.column = 1;
+            previous_cr = false;
+        } else {
+            ++location.column;
+            previous_cr = false;
+        }
+    }
+    return location;
+}
+
+std::optional<SourceRange> trimmed_range(
+    const Token& opening, std::string_view body) {
+    const auto first = body.find_first_not_of(" \t\r\n\f\v");
+    if (first == std::string_view::npos)
+        return std::nullopt;
+    const auto last = body.find_last_not_of(" \t\r\n\f\v") + 1;
+    auto begin = advance_location(opening.end_location, body.substr(0, first));
+    auto end = advance_location(begin, body.substr(first, last - first));
+    return SourceRange{std::move(begin), std::move(end)};
+}
+
 bool is_identifier_start(char ch) {
     const auto value = static_cast<unsigned char>(ch);
     return std::isalpha(value) != 0 || ch == '_';
@@ -339,7 +370,9 @@ std::string Parser::read_bracketed(const Token& opening) {
 
 void Parser::parse_directive(Fsm& fsm, const Token& directive) {
     if (directive.text == "%start") {
-        fsm.start_state = expect_identifier("a start state in map::state form").text;
+        const auto name = expect_identifier("a start state in map::state form");
+        fsm.start_state = name.text;
+        fsm.start_state_range = SourceRange{name.location, name.end_location};
     } else if (directive.text == "%class") {
         fsm.context_class = expect_identifier("a context class name").text;
     } else if (directive.text == "%fsmclass") {
@@ -366,7 +399,9 @@ void Parser::parse_directive(Fsm& fsm, const Token& directive) {
 StateMap Parser::parse_map(const Token& directive) {
     StateMap map;
     map.location = directive.location;
-    map.name = expect_identifier("a map name").text;
+    const auto name = expect_identifier("a map name");
+    map.name = name.text;
+    map.name_range = SourceRange{name.location, name.end_location};
     expect(TokenKind::double_percent, "'%%' after the map name");
 
     while (peek().kind != TokenKind::double_percent && peek().kind != TokenKind::end) {
@@ -396,6 +431,7 @@ State Parser::parse_state(const StateMap&) {
     const Token name = expect_identifier("a state name");
     state.name = name.text;
     state.location = name.location;
+    state.name_range = SourceRange{name.location, name.end_location};
 
     while (at_word("Entry") || at_word("Exit")) {
         const auto action_kind = consume();
@@ -440,6 +476,7 @@ Transition Parser::parse_transition() {
     const Token name = expect_identifier("a transition name");
     transition.name = name.text;
     transition.location = name.location;
+    transition.name_range = SourceRange{name.location, name.end_location};
 
     if (peek().kind == TokenKind::left_paren) {
         const Token opening = consume();
@@ -470,7 +507,9 @@ Guard Parser::parse_guard() {
     if (accept_word("push")) {
         guard.transition_type = "push";
         const Token opening = expect(TokenKind::left_paren, "'(' after push");
-        guard.push_state = trim(read_parenthesized(opening));
+        const auto body = read_parenthesized(opening);
+        guard.push_state = trim(body);
+        guard.push_state_range = trimmed_range(opening, body);
         if (guard.push_state.empty()) {
             fail(opening, "A push transition requires a destination state.");
         }
@@ -478,7 +517,9 @@ Guard Parser::parse_guard() {
     } else if (accept_word("jump")) {
         guard.transition_type = "jump";
         const Token opening = expect(TokenKind::left_paren, "'(' after jump");
-        guard.end_state = trim(read_parenthesized(opening));
+        const auto body = read_parenthesized(opening);
+        guard.end_state = trim(body);
+        guard.end_state_range = trimmed_range(opening, body);
         if (guard.end_state.empty()) {
             fail(opening, "A jump transition requires a destination state.");
         }
@@ -489,6 +530,7 @@ Guard Parser::parse_guard() {
             const auto body = read_parenthesized(opening);
             const auto comma = body.find(',');
             guard.end_state = trim(body.substr(0, comma));
+            guard.end_state_range = trimmed_range(opening, std::string_view(body).substr(0, comma));
             if (comma != std::string::npos) {
                 guard.pop_arguments = trim(body.substr(comma + 1));
             }
@@ -506,13 +548,16 @@ Guard Parser::parse_guard() {
     } else {
         const Token destination = expect_identifier("an end state, push, pop or jump");
         guard.end_state = destination.text;
+        guard.end_state_range = SourceRange{destination.location, destination.end_location};
         if (accept(TokenKind::slash)) {
             if (!accept_word("push")) {
                 fail(peek(), "'push' must follow '/' in a push transition.");
             }
             guard.transition_type = "push";
             const Token opening = expect(TokenKind::left_paren, "'(' after /push");
-            guard.push_state = trim(read_parenthesized(opening));
+            const auto body = read_parenthesized(opening);
+            guard.push_state = trim(body);
+            guard.push_state_range = trimmed_range(opening, body);
             if (guard.push_state.empty()) {
                 fail(opening, "A push transition requires a destination state.");
             }

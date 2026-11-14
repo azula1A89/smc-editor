@@ -73,6 +73,53 @@ std::size_t source_offset_at_location(
     return std::min(line_start + (location.column > 0 ? location.column - 1 : 0), line_end);
 }
 
+std::vector<SemanticRange> collect_semantic_ranges(
+    const smc::Fsm& fsm, std::string_view contents) {
+    const auto offsets = source_line_offsets(contents);
+    std::vector<SemanticRange> result;
+    const auto add = [&](const std::optional<smc::SourceRange>& range,
+                         std::string_view name, SemanticKind kind, bool qualified = false) {
+        if (!range || name.empty() || name == "nil")
+            return;
+        const auto begin = source_offset_at_location(contents, offsets, range->begin);
+        const auto end = source_offset_at_location(contents, offsets, range->end);
+        if (end < begin || contents.substr(begin, end - begin) != name)
+            throw std::runtime_error("SMC semantic name range does not match source text");
+        if (qualified && kind == SemanticKind::state) {
+            const auto separator = name.find("::");
+            if (separator != std::string_view::npos) {
+                if (separator > 0 && separator + 2 < name.size()) {
+                    result.push_back({begin, begin + separator, SemanticKind::state_map});
+                    result.push_back({begin + separator + 2, end, SemanticKind::state});
+                }
+                return;
+            }
+        }
+        result.push_back({begin, end, kind});
+    };
+    add(fsm.start_state_range, fsm.start_state, SemanticKind::state, true);
+    for (const auto& map : fsm.maps) {
+        add(map.name_range, map.name, SemanticKind::state_map);
+        for (const auto& state : map.states) {
+            add(state.name_range, state.name, SemanticKind::state);
+            for (const auto& transition : state.transitions) {
+                add(transition.name_range, transition.name, SemanticKind::transition);
+                for (const auto& guard : transition.guards) {
+                    add(guard.end_state_range, guard.end_state,
+                        guard.transition_type == "pop"
+                            ? SemanticKind::transition : SemanticKind::state,
+                        guard.transition_type != "pop");
+                    add(guard.push_state_range, guard.push_state, SemanticKind::state, true);
+                }
+            }
+        }
+    }
+    std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) {
+        return a.begin < b.begin;
+    });
+    return result;
+}
+
 int focus_priority(GraphObjectKind kind) {
     switch (kind) {
     case GraphObjectKind::state_map: return 0;
@@ -461,7 +508,10 @@ std::optional<SourceSegment> source_range_for_focus(
 std::optional<dot_layout::DirectedGraph> make_graph_from_contents(
     const std::string& contents, const std::string& source_name, DiagnosticLog* log,
     std::vector<SourceSegment>* source_segments, std::vector<SourceSegment>* source_ranges,
-    AstTreeView* ast, smc::Diagnostics* source_diagnostics) {
+    AstTreeView* ast, smc::Diagnostics* source_diagnostics,
+    std::optional<std::vector<SemanticRange>>* semantic_ranges) {
+    if (semantic_ranges)
+        semantic_ranges->reset();
     smc::Diagnostics diagnostics;
     smc::Parser parser(contents, source_name, diagnostics);
     const auto fsm = parser.parse();
@@ -473,6 +523,8 @@ std::optional<dot_layout::DirectedGraph> make_graph_from_contents(
     if (!syntax_valid)
         return std::nullopt;
 
+    if (semantic_ranges)
+        *semantic_ranges = collect_semantic_ranges(*fsm, contents);
     DirectedGraphGenerator generator(contents, source_name, log);
     auto result = generator.generate(*fsm);
     if (!result)
@@ -542,7 +594,8 @@ void AnalysisWorker::run() {
                 ? make_graph_from_contents(*job->source, job->source_name,
                                            &diagnostics, &result.source_segments,
                                            &result.source_ranges, &result.ast,
-                                           &result.source_diagnostics)
+                                           &result.source_diagnostics,
+                                           &result.semantic_ranges)
                 : std::optional<dot_layout::DirectedGraph>(std::move(job->graph));
             if (result.graph) {
                 apply_graph_preferences(*result.graph, job->graph_preferences);
@@ -573,8 +626,10 @@ AnalysisCoordinator::AnalysisCoordinator(bool has_source, Clock::time_point now)
     : source_needs_analysis_(has_source), deadline_(now) {}
 
 void AnalysisCoordinator::text_changed(Clock::time_point now, TextEditor* editor) {
-    if (editor)
+    if (editor) {
         editor->ClearMarkers();
+        editor->SetSemanticRanges({});
+    }
     source_is_indexed_ = false;
     source_needs_analysis_ = true;
     deadline_ = now + std::chrono::milliseconds(500);
@@ -607,8 +662,25 @@ void AnalysisCoordinator::accept(
         active_revision_.reset();
     if (result.revision != revision_)
         return;
-    if (result.source_job && editor)
+    if (result.source_job && editor) {
         set_source_error_markers(*editor, result.source_diagnostics, result.source_name);
+        std::vector<TextEditor::SemanticRange> ranges;
+        if (result.semantic_ranges) {
+            const auto text = editor->GetText();
+            const auto offsets = source_line_offsets(text);
+            ranges.reserve(result.semantic_ranges->size());
+            for (const auto& range : *result.semantic_ranges) {
+                auto color = TextEditor::Color::semanticMap;
+                if (range.kind == SemanticKind::state)
+                    color = TextEditor::Color::semanticState;
+                else if (range.kind == SemanticKind::transition)
+                    color = TextEditor::Color::semanticTransition;
+                ranges.push_back({editor_position_at_offset(text, offsets, range.begin),
+                                  editor_position_at_offset(text, offsets, range.end), color});
+            }
+        }
+        editor->SetSemanticRanges(ranges);
+    }
     for (auto& record : result.diagnostics)
         log.publish(std::move(record));
     if (result.graph && result.layout) {

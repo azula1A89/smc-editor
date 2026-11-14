@@ -11,6 +11,7 @@
 
 #include <analysis.hpp>
 #include <app_context.hpp>
+#include <smc_text_editor_language.hpp>
 #include <ui_windows.hpp>
 
 namespace {
@@ -93,6 +94,156 @@ void test_cached_offsets() {
             "Cached UTF-8/CRLF position is incorrect");
     require(editor_offset_at_position(text, offsets, TextEditor::DocPos(2, 0)) == text.size(),
             "Cached final line position is incorrect");
+}
+
+void test_semantic_highlighting() {
+    using namespace std::chrono_literals;
+    const std::string source =
+        "// Shared 猫\r\n"
+        "%start Shared::Shared\r\n%class Context\r\n%header context.h\r\n"
+        "%map /* 猫 */ Shared\r\n%%\r\n"
+        "Shared\r\n{\r\n"
+        " Shared Shared { Shared(); }\r\n"
+        " leave Shared/push(Other::Shared) {}\r\n"
+        " jumpTo jump(\r\n Other::Shared \r\n) {}\r\n"
+        " bounce push( Shared ) {}\r\n"
+        " back pop( Shared ) {}\r\n"
+        "}\r\n%%\r\n%map Other\r\n%%\r\nShared\r\n{\r\n Shared nil {}\r\n}\r\n%%\r\n";
+    std::optional<std::vector<SemanticRange>> ranges;
+    require(make_graph_from_contents(source, "semantic.sm", nullptr, nullptr, nullptr,
+                                     nullptr, nullptr, &ranges).has_value() &&
+                ranges.has_value(),
+            "Semantic fixture did not parse");
+    const auto at = [&](std::size_t offset) -> std::optional<SemanticKind> {
+        for (const auto& range : *ranges)
+            if (range.begin <= offset && offset < range.end)
+                return range.kind;
+        return std::nullopt;
+    };
+    const auto check = [&](std::string_view text, std::size_t local, SemanticKind kind) {
+        const auto start = source.find(text);
+        require(start != std::string::npos && at(start + local) == kind,
+                "Semantic name has an incorrect type or position");
+    };
+    check("%start Shared::Shared", 7, SemanticKind::state_map);
+    check("%start Shared::Shared", 15, SemanticKind::state);
+    check("*/ Shared\r\n%%", 3, SemanticKind::state_map);
+    check("\r\nShared\r\n{", 2, SemanticKind::state);
+    check(" Shared Shared {", 1, SemanticKind::transition);
+    check(" Shared Shared {", 8, SemanticKind::state);
+    check("push(Other::Shared)", 5, SemanticKind::state_map);
+    check("push(Other::Shared)", 12, SemanticKind::state);
+    check("jump(\r\n Other::Shared", 8, SemanticKind::state_map);
+    check("jump(\r\n Other::Shared", 15, SemanticKind::state);
+    check("push( Shared )", 6, SemanticKind::state);
+    check("pop( Shared )", 5, SemanticKind::transition);
+    check("%map Other", 5, SemanticKind::state_map);
+    require(!at(source.find("// Shared") + 3) &&
+                !at(source.find("Shared();")) &&
+                !at(source.find("nil {}")) &&
+                !at(source.find("Shared::Shared") + 6),
+            "Comments, actions, keywords, or scope punctuation were colored");
+    require(ranges->size() == 20, "Unexpected number of semantic ranges");
+    for (std::size_t i = 0; i < ranges->size(); ++i) {
+        require((*ranges)[i].begin < (*ranges)[i].end &&
+                    (i == 0 || (*ranges)[i - 1].end <= (*ranges)[i].begin),
+                "Semantic ranges are empty, unsorted, or overlapping");
+    }
+
+    TextEditor editor;
+    editor.SetText(source);
+    const auto editor_text = editor.GetText();
+    AnalysisWorker worker;
+    dot_layout::LayoutOptions options;
+    options.rank_separation = 0;
+    worker.submit({1, editor_text, "semantic.sm", {}, options});
+    auto failure = wait_for(worker, 1);
+    require(!failure.layout && failure.semantic_ranges && !failure.semantic_ranges->empty(),
+            "Layout failure discarded valid semantic ranges");
+
+    AnalysisCoordinator coordinator(true, AnalysisCoordinator::Clock::time_point{});
+    CanvasState canvas;
+    DiagnosticLog log(DiagnosticLog::default_capacity, false);
+    const auto now = AnalysisCoordinator::Clock::time_point{};
+    auto job = coordinator.next_job(now, editor_text, "semantic.sm", canvas);
+    require(job.has_value(), "Semantic analysis was not scheduled");
+    failure.revision = job->revision;
+    coordinator.accept(std::move(failure), canvas, log, &editor);
+    const auto offsets = source_line_offsets(editor_text);
+    const auto map_pos = editor_position_at_offset(editor_text, offsets, editor_text.find("*/ Shared\n%%") + 3);
+    const auto state_pos = editor_position_at_offset(editor_text, offsets, editor_text.find("\nShared\n{") + 1);
+    const auto trans_pos = editor_position_at_offset(editor_text, offsets, editor_text.find(" Shared Shared {") + 1);
+    require(editor.GetSemanticColor(map_pos) == TextEditor::Color::semanticMap &&
+                editor.GetSemanticColor(state_pos) == TextEditor::Color::semanticState &&
+                editor.GetSemanticColor(trans_pos) == TextEditor::Color::semanticTransition,
+            "Editor did not apply semantic colors after layout failure");
+    auto layout_job = coordinator.next_job(now, editor_text, "semantic.sm", canvas);
+    require(layout_job && !layout_job->source, "Layout-only job was not scheduled");
+    AnalysisResult layout{layout_job->revision, false};
+    coordinator.accept(std::move(layout), canvas, log, &editor);
+    require(editor.GetSemanticColor(map_pos) == TextEditor::Color::semanticMap,
+            "Layout-only result cleared semantic colors");
+    coordinator.text_changed(now, &editor);
+    require(editor.GetSemanticColor(map_pos) == TextEditor::Color::count,
+            "Edit did not clear semantic colors");
+    auto stale_job = coordinator.next_job(now + 500ms, editor_text, "semantic.sm", canvas);
+    require(stale_job.has_value(), "Changed source was not scheduled");
+    coordinator.text_changed(now + 600ms, &editor);
+    AnalysisResult stale{stale_job->revision, true};
+    stale.semantic_ranges = *ranges;
+    coordinator.accept(std::move(stale), canvas, log, &editor);
+    require(editor.GetSemanticColor(map_pos) == TextEditor::Color::count,
+            "Stale analysis restored semantic colors");
+    auto invalid_job = coordinator.next_job(now + 1100ms, editor_text, "semantic.sm", canvas);
+    require(invalid_job.has_value(), "Latest source was not scheduled");
+    AnalysisResult invalid_result{invalid_job->revision, true};
+    coordinator.accept(std::move(invalid_result), canvas, log, &editor);
+    require(editor.GetSemanticColor(map_pos) == TextEditor::Color::count,
+            "Invalid source restored semantic colors");
+    std::optional<std::vector<SemanticRange>> invalid = *ranges;
+    require(!make_graph_from_contents("%unknown\n", "semantic.sm", nullptr, nullptr,
+                                      nullptr, nullptr, nullptr, &invalid) && !invalid,
+            "Invalid source retained semantic ranges");
+}
+
+void test_semantic_rendering() {
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    io.DisplaySize = ImVec2(900, 600);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+    io.Fonts->AddFontFromMemoryCompressedTTF(
+        static_cast<const void*>(&dejavu), dejavuSize, 15.0f);
+    TextEditor editor;
+    editor.SetLanguage(smc_editor::language());
+    editor.SetText("%map state transition");
+    editor.SetSemanticRanges({
+        {{0, 1}, {0, 4}, TextEditor::Color::semanticMap},
+        {{0, 5}, {0, 10}, TextEditor::Color::semanticState},
+        {{0, 11}, {0, 21}, TextEditor::Color::semanticTransition}});
+    for (const auto* palette : {&TextEditor::GetDarkPalette(), &TextEditor::GetLightPalette()}) {
+        editor.SetPalette(*palette);
+        bool seen[3]{};
+        for (int frame = 0; frame < 2; ++frame) {
+            ImGui::NewFrame();
+            ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(900, 600), ImGuiCond_Always);
+            ImGui::Begin("Semantic test");
+            editor.Render("Source", ImVec2(0, 0));
+            ImGui::End();
+            ImGui::Render();
+            for (const auto* draw_list : ImGui::GetDrawData()->CmdLists)
+                for (const auto& vertex : draw_list->VtxBuffer) {
+                    seen[0] |= vertex.col == palette->get(TextEditor::Color::semanticMap);
+                    seen[1] |= vertex.col == palette->get(TextEditor::Color::semanticState);
+                    seen[2] |= vertex.col == palette->get(TextEditor::Color::semanticTransition);
+                }
+        }
+        require(seen[0] && seen[1] && seen[2],
+                "Semantic colors were not rendered for the selected theme");
+    }
+    ImGui::DestroyContext();
 }
 
 void test_error_markers() {
@@ -507,7 +658,14 @@ int main(int argc, char** argv) {
             test_error_marker_rendering();
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--semantic") {
+            test_semantic_highlighting();
+            test_semantic_rendering();
+            return 0;
+        }
         test_cached_offsets();
+        test_semantic_highlighting();
+        test_semantic_rendering();
         test_error_markers();
         test_error_marker_rendering();
         test_coordinator();
