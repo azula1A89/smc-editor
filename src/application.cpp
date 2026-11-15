@@ -126,7 +126,7 @@ int run_application(int argc, char** argv) {
     ImGui::CreateContext();
 
     AppContext app;
-    const std::string input_file = argc > 1 ? argv[1] : "mapmanager.sm";
+    const std::string input_file = argc > 1 ? argv[1] : "";
     app.initialize(input_file, [] { glfwPostEmptyEvent(); });
     glfwSetWindowUserPointer(window, &app);
     glfwSetWindowSize(window, app.settings.window_width, app.settings.window_height);

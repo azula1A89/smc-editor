@@ -15,14 +15,14 @@ AppContext::AppContext() = default;
 AppContext::~AppContext() = default;
 
 void AppContext::initialize(std::string source_file, std::function<void()> result_ready) {
-    input_file = std::move(source_file);
     editor = std::make_unique<TextEditor>();
     autocomplete = std::make_unique<TrieAutoComplete>();
     autocomplete->Connect(editor.get());
     editor->SetLanguage(smc_editor::language());
     settings.initialize(&log);
     settings.apply_editor_options(*editor);
-
+    const auto recent_file = settings.recent_files.empty() ? "" : settings.recent_files.front();
+    input_file = source_file.empty() ? recent_file : std::move(source_file);
     const auto contents = read_input_file(input_file, &log);
     if (contents) {
         editor->SetText(*contents);
