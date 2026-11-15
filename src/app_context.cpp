@@ -14,7 +14,7 @@ AppContext::AppContext() = default;
 
 AppContext::~AppContext() = default;
 
-void AppContext::initialize(std::string source_file) {
+void AppContext::initialize(std::string source_file, std::function<void()> result_ready) {
     settings.initialize(&log);
 
     input_file = std::move(source_file);
@@ -39,5 +39,5 @@ void AppContext::initialize(std::string source_file) {
     canvas.options.compound = settings.compound;
     coordinator = std::make_unique<AnalysisCoordinator>(
         contents.has_value(), AnalysisCoordinator::Clock::now());
-    worker = std::make_unique<AnalysisWorker>();
+    worker = std::make_unique<AnalysisWorker>(std::move(result_ready));
 }

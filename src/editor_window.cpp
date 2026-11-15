@@ -217,6 +217,7 @@ void select_graph_source(AppContext& app, const SourceSegment& source) {
 }
 
 void render_editor_window(AppContext& app) {
+    app.editor_visible = false;
     if (!ImGui::Begin("SMC Editor", nullptr, ImGuiWindowFlags_MenuBar)) {
         ImGui::End();
         render_file_selector(app);
@@ -224,6 +225,7 @@ void render_editor_window(AppContext& app) {
         return;
     }
 
+    app.editor_visible = true;
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("file")) {
             if (ImGui::MenuItem("open"))

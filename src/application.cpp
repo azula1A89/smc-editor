@@ -5,6 +5,7 @@
 #include <utility>
 
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <imgui_freetype.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
@@ -22,12 +23,27 @@
 namespace {
 
 void render_frame(GLFWwindow* window) {
+    static bool rendering = false;
+    if (rendering)
+        return;
     auto* app = static_cast<AppContext*>(glfwGetWindowUserPointer(window));
     if (!app)
         return;
 
-    const auto title = std::filesystem::path(app->input_file).filename().string();
-    glfwSetWindowTitle(window, title.empty() ? "SMC Editor" : title.c_str());
+    struct RenderingGuard {
+        bool& flag;
+        explicit RenderingGuard(bool& value) : flag(value) { flag = true; }
+        ~RenderingGuard() { flag = false; }
+    } guard(rendering);
+
+    auto title = std::filesystem::path(app->input_file).filename().string();
+    if (title.empty())
+        title = "SMC Editor";
+    // Repeated title updates can themselves wake GLFW's event wait on X11.
+    if (title != app->window_title) {
+        glfwSetWindowTitle(window, title.c_str());
+        app->window_title = std::move(title);
+    }
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
@@ -54,6 +70,20 @@ void render_frame(GLFWwindow* window) {
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     glfwSwapBuffers(window);
+}
+
+bool needs_interactive_frames(const AppContext& app) {
+    const ImGuiContext& context = *ImGui::GetCurrentContext();
+    if (!context.InputEventsQueue.empty() ||
+        (app.editor_visible && app.editor->IsMiddleMouseScrolling()))
+        return true;
+    for (int i = 0; i < ImGuiMouseButton_COUNT; ++i)
+        if (context.IO.MouseDown[i])
+            return true;
+    for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; ++key)
+        if (ImGui::IsKeyDown(static_cast<ImGuiKey>(key)))
+            return true;
+    return false;
 }
 
 void configure_fonts() {
@@ -97,7 +127,7 @@ int run_application(int argc, char** argv) {
 
     AppContext app;
     const std::string input_file = argc > 1 ? argv[1] : "mapmanager.sm";
-    app.initialize(input_file);
+    app.initialize(input_file, [] { glfwPostEmptyEvent(); });
     glfwSetWindowUserPointer(window, &app);
     glfwSetWindowSize(window, app.settings.window_width, app.settings.window_height);
 
@@ -129,9 +159,24 @@ int run_application(int argc, char** argv) {
             context->settings.sync();
         });
 
+    int settling_frames = 0;
     while (glfwWindowShouldClose(window) == GLFW_FALSE) {
-        glfwPollEvents();
+        const auto frame_start = AnalysisCoordinator::Clock::now();
         render_frame(window);
+        const auto& context = *ImGui::GetCurrentContext();
+        if (!context.InputEventsTrail.empty())
+            settling_frames = 2;
+        else if (settling_frames > 0)
+            --settling_frames;
+
+        const bool interactive = settling_frames > 0 || needs_interactive_frames(app);
+        auto wake_at = frame_start + (interactive ? std::chrono::milliseconds(16)
+                                                  : std::chrono::milliseconds(100));
+        if (const auto deadline = app.coordinator->next_deadline())
+            wake_at = std::min(wake_at, *deadline);
+        const auto remaining = std::chrono::duration<double>(
+            wake_at - AnalysisCoordinator::Clock::now()).count();
+        glfwWaitEventsTimeout(std::max(remaining, 0.001));
     }
 
     app.worker.reset();

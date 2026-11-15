@@ -87,6 +87,38 @@ void test_worker() {
             "Worker did not complete the latest queued request");
 }
 
+void test_worker_notification() {
+    std::mutex mutex;
+    std::condition_variable condition;
+    int notifications = 0;
+    AnalysisWorker worker([&] {
+        {
+            std::lock_guard lock(mutex);
+            ++notifications;
+        }
+        condition.notify_one();
+    });
+
+    const auto wait_for_notification = [&](int expected) {
+        std::unique_lock lock(mutex);
+        require(condition.wait_for(lock, std::chrono::seconds(30),
+                                   [&] { return notifications >= expected; }),
+                "Worker did not notify when its result was ready");
+    };
+
+    worker.submit({42, std::string("%unknown\n"), "invalid.sm", {}, {}});
+    wait_for_notification(1);
+    auto result = worker.take_result();
+    require(result && result->revision == 42 && !result->diagnostics.empty(),
+            "Worker notification did not publish the result");
+    worker.submit({43, std::nullopt, "graph.sm",
+                   dot_layout::DirectedGraph{{{"a", "A"}}, {}, {}}, {}});
+    wait_for_notification(2);
+    result = worker.take_result();
+    require(result && result->revision == 43 && result->layout,
+            "Worker did not publish and notify for a subsequent successful job");
+}
+
 void test_cached_offsets() {
     const std::string text = "a\r\n猫z\n";
     const auto offsets = source_line_offsets(text);
@@ -376,17 +408,23 @@ void test_coordinator() {
     DiagnosticLog log;
     auto initial = coordinator.next_job(start, "", "test.sm", canvas);
     require(initial && !initial->source, "Initial fallback layout was not scheduled");
+    require(!coordinator.next_deadline(), "Fallback job created an analysis deadline");
     AnalysisResult initial_result{initial->revision, false};
     initial_result.graph = canvas.graph;
     initial_result.layout = dot_layout::LayoutResult{};
     coordinator.accept(std::move(initial_result), canvas, log);
     coordinator.text_changed(start);
+    require(coordinator.next_deadline() == start + 500ms,
+            "Debounce deadline was not exposed to the event loop");
     require(!coordinator.next_job(start + 499ms, "a", "test.sm", canvas),
             "Analysis ran before debounce elapsed");
     auto first = coordinator.next_job(start + 500ms, "a", "test.sm", canvas);
     require(first && first->source && *first->source == "a",
             "Analysis did not run at debounce deadline");
+    require(!coordinator.next_deadline(), "Active analysis retained its deadline");
     coordinator.text_changed(start + 600ms);
+    require(coordinator.next_deadline() == start + 1100ms,
+            "A later edit did not update the wake deadline");
     AnalysisResult stale{first->revision, true};
     stale.diagnostics.push_back({std::chrono::system_clock::now(), LogLevel::error,
                                  "SMC", "stale diagnostic"});
@@ -425,6 +463,7 @@ void test_coordinator() {
     success.ast.nodes.push_back({"state", {1, 3, GraphObjectKind::state, {0}}, {}});
     success.ast.roots.push_back(0);
     coordinator.accept(std::move(success), canvas, log);
+    require(!coordinator.next_deadline(), "Completed analysis retained its deadline");
     require(coordinator.source_is_indexed() && canvas.graph.nodes[0].id == "new" &&
                 coordinator.source_ranges().size() == 1 &&
                 coordinator.source_ranges()[0].begin == 1 &&
@@ -670,6 +709,7 @@ int main(int argc, char** argv) {
         test_error_marker_rendering();
         test_coordinator();
         test_worker();
+        test_worker_notification();
         test_layout_cache_and_culling();
     } catch (const std::exception& error) {
         std::cerr << "performance_pipeline_tests: " << error.what() << '\n';

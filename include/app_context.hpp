@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -93,13 +94,15 @@ public:
     AppContext(const AppContext&) = delete;
     AppContext& operator=(const AppContext&) = delete;
 
-    void initialize(std::string input_file);
+    void initialize(std::string input_file, std::function<void()> result_ready = {});
 
     UserSettings settings;
     std::unique_ptr<TextEditor> editor;
+    bool editor_visible = false;
     std::unique_ptr<TrieAutoComplete> autocomplete;
     DiagnosticLog log;
     std::string input_file;
+    std::string window_title;
     std::string editor_text;
     std::vector<std::size_t> line_offsets;
     CanvasState canvas;

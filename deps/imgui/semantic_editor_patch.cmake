@@ -26,6 +26,9 @@ endfunction()
 
 file(READ "${color_te_original_source_dir}/TextEditor.h" header)
 replace_once(header
+    "	inline bool IsMiddleMousePanMode() const { return config.panMode; }"
+    "	inline bool IsMiddleMousePanMode() const { return config.panMode; }\n	inline bool IsMiddleMouseScrolling() const { return scrolling; }")
+replace_once(header
     "		currentLineHighlightBorder,\n		count"
     "		currentLineHighlightBorder,\n		semanticMap,\n		semanticState,\n		semanticTransition,\n		count")
 replace_once(header

@@ -546,7 +546,8 @@ std::optional<dot_layout::DirectedGraph> make_graph(
     return make_graph_from_contents(*contents, input_file, log);
 }
 
-AnalysisWorker::AnalysisWorker() : thread_([this] { run(); }) {}
+AnalysisWorker::AnalysisWorker(std::function<void()> result_ready)
+    : result_ready_(std::move(result_ready)), thread_([this] { run(); }) {}
 
 AnalysisWorker::~AnalysisWorker() {
     {
@@ -619,6 +620,8 @@ void AnalysisWorker::run() {
             std::lock_guard lock(mutex_);
             result_ = std::move(result);
         }
+        if (result_ready_)
+            result_ready_();
     }
 }
 
@@ -638,6 +641,13 @@ void AnalysisCoordinator::text_changed(Clock::time_point now, TextEditor* editor
 
 void AnalysisCoordinator::settings_changed() {
     invalidate();
+}
+
+std::optional<AnalysisCoordinator::Clock::time_point>
+AnalysisCoordinator::next_deadline() const {
+    if (source_needs_analysis_ && !active_revision_)
+        return deadline_;
+    return std::nullopt;
 }
 
 bool AnalysisCoordinator::source_is_indexed() const {

@@ -3,6 +3,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -70,7 +71,7 @@ void set_source_error_markers(
 
 class AnalysisWorker {
 public:
-    AnalysisWorker();
+    explicit AnalysisWorker(std::function<void()> result_ready = {});
     ~AnalysisWorker();
 
     AnalysisWorker(const AnalysisWorker&) = delete;
@@ -87,6 +88,7 @@ private:
     std::optional<AnalysisJob> pending_;
     std::optional<AnalysisResult> result_;
     bool stopping_ = false;
+    std::function<void()> result_ready_;
     std::thread thread_;
 };
 
@@ -97,6 +99,7 @@ public:
     explicit AnalysisCoordinator(bool has_source, Clock::time_point now);
     void text_changed(Clock::time_point now, TextEditor* editor = nullptr);
     void settings_changed();
+    std::optional<Clock::time_point> next_deadline() const;
     bool source_is_indexed() const;
     const std::vector<SourceSegment>& source_segments() const;
     const std::vector<SourceSegment>& source_ranges() const;
