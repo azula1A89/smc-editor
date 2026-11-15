@@ -73,7 +73,7 @@ SMC 解析和语法校验错误会以红色背景标记编辑器中的行号和�
 
 日志接口位于 [include/log.hpp](include/log.hpp)：`DiagnosticLog::write` 接收等级、来源和详情，并记录产生时间；写入、清空和快照均可跨线程安全调用。默认保留最近 10,000 条记录，超出时淘汰最旧记录；同时输出到标准错误。后台分析的诊断仅在对应结果被接受时发布，过期结果不会显示或输出。状态窗口按 Debug、Info、Warning、Error 着色，可分别开关等级并按来源的大小写敏感子串过滤；空来源过滤显示全部。多行记录计为一条，窗口按行裁剪渲染；Clear 清空历史，过滤不会删除记录。
 
-UI 代码按职责拆分：[`src/main.cpp`](src/main.cpp) 只保留入口，`src/application.cpp` 管理 GLFW/ImGui 生命周期和每帧合并，`src/editor_window.cpp`、`src/graph_window.cpp`、`src/log_window.cpp` 分别渲染窗口；`AppContext` 汇集运行时状态，`UserSettings` 通过 ImGui INI 保存窗口尺寸和画布设置。节点形状与边权重仅在图结构和标签匹配时恢复，避免将旧偏好误用到不同的图。
+UI 代码按职责拆分：[`src/main.cpp`](src/main.cpp) 只保留入口，`src/application.cpp` 管理 GLFW/ImGui 生命周期和每帧合并，`src/editor_window.cpp`、`src/graph_window.cpp`、`src/log_window.cpp` 分别渲染窗口；`AppContext` 汇集运行时状态，`UserSettings` 通过 ImGui INI 保存窗口、画布和编辑器选项，以及最近打开的 10 个 `.sm` 文件。编辑器 `file` 菜单的 `open recent` 会打开最近成功载入的文件；已不存在的文件会从历史记录移除。节点形状与边权重只在当前运行期间保留，不写入设置文件。
 
 ### 子图、compound 和 ratio
 

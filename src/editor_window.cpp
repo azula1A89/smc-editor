@@ -39,6 +39,8 @@ bool open_source_file(AppContext& app, const std::filesystem::path& path) {
     app.coordinator->text_changed(AnalysisCoordinator::Clock::now(), app.editor.get());
     app.focus.reset();
     app.canvas_focus.reset();
+    if (app.settings.record_recent_file(path))
+        app.settings.sync();
     return true;
 }
 
@@ -226,10 +228,25 @@ void render_editor_window(AppContext& app) {
     }
 
     app.editor_visible = true;
+    const auto previous_editor_options = app.settings.editor_options;
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("file")) {
             if (ImGui::MenuItem("open"))
                 request_file_selector(app, false);
+            if (app.settings.prune_recent_files())
+                app.settings.sync();
+            if (ImGui::BeginMenu("open recent")) {
+                if (app.settings.recent_files.empty()) {
+                    ImGui::TextDisabled("No recent .sm files");
+                } else {
+                    const auto recent_files = app.settings.recent_files;
+                    for (const auto& path : recent_files) {
+                        if (ImGui::MenuItem(path.c_str()))
+                            open_source_file(app, path);
+                    }
+                }
+                ImGui::EndMenu();
+            }
             if (ImGui::MenuItem("save"))
                 save_source_file(app);
             if (ImGui::BeginMenu("generate")) {
@@ -279,10 +296,12 @@ void render_editor_window(AppContext& app) {
 				if (ImGui::MenuItem("Dark")) {
                     ImGui::StyleColorsDark();
                     app.editor->SetPalette(app.editor->GetDarkPalette());
+				    app.settings.editor_options.light_palette = false;
                 }
 				if (ImGui::MenuItem("Light")) {
                     ImGui::StyleColorsLight();
                     app.editor->SetPalette(app.editor->GetLightPalette());
+				    app.settings.editor_options.light_palette = true;
                 }
 				ImGui::EndMenu();
 			}
@@ -332,6 +351,9 @@ void render_editor_window(AppContext& app) {
 
 			ImGui::EndMenu();
 		}
+        app.settings.capture_editor_options(*app.editor);
+        if (previous_editor_options != app.settings.editor_options)
+            app.settings.sync();
         ImGui::EndMenuBar();
     }
     const bool changed = app.editor->Render("Source", ImVec2(0.0f, 0.0f));

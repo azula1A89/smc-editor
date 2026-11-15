@@ -1,11 +1,14 @@
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <string_view>
 #include <utility>
 
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <TextEditor.h>
 
 #include <user_settings.hpp>
 #include <log.hpp>
@@ -17,12 +20,6 @@ bool parse_integer(std::string_view value, int& result) {
     return parsed.ec == std::errc{} && parsed.ptr == value.data() + value.size();
 }
 
-bool parse_unsigned(std::string_view value, std::uint64_t& result) {
-    const auto parsed = std::from_chars(
-        value.data(), value.data() + value.size(), result, 16);
-    return parsed.ec == std::errc{} && parsed.ptr == value.data() + value.size();
-}
-
 bool parse_float(std::string_view value, float& result) {
     const std::string text(value);
     char* end = nullptr;
@@ -31,23 +28,11 @@ bool parse_float(std::string_view value, float& result) {
            std::isfinite(result);
 }
 
-std::vector<int> parse_integer_list(std::string_view value, bool& valid) {
-    std::vector<int> result;
-    valid = true;
-    while (!value.empty()) {
-        const auto separator = value.find(',');
-        const auto item = value.substr(0, separator);
-        int parsed = 0;
-        if (item.empty() || !parse_integer(item, parsed)) {
-            valid = false;
-            return {};
-        }
-        result.push_back(parsed);
-        if (separator == std::string_view::npos)
-            break;
-        value.remove_prefix(separator + 1);
-    }
-    return result;
+bool parse_boolean(std::string_view value, bool& result) {
+    if (value != "0" && value != "1")
+        return false;
+    result = value == "1";
+    return true;
 }
 
 std::uint64_t fingerprint(const dot_layout::DirectedGraph& graph) {
@@ -166,25 +151,68 @@ void UserSettings::read_line_func(
                 integer <= static_cast<int>(RatioSelection::Numeric);
         if (valid)
             settings.ratio_selection = static_cast<RatioSelection>(integer);
-    } else if (key == "graph_fingerprint") {
-        valid = parse_unsigned(value, settings.graph_preferences.fingerprint);
-    } else if (key == "node_shapes" || key == "edge_weights") {
-        auto values = parse_integer_list(value, valid);
-        if (valid) {
-            for (const int item : values) {
-                if (key == "node_shapes")
-                    valid = item >= 0 &&
-                            item <= static_cast<int>(dot_layout::NodeShape::Point);
-                else
-                    valid = item >= 1 && item <= 1000;
-                if (!valid)
-                    break;
-            }
-        }
-        if (valid && key == "node_shapes")
-            settings.graph_preferences.node_shapes = std::move(values);
+    } else if (key == "editor_tab_size" || key == "editor_minimap_columns" ||
+               key == "editor_line_number_left_margin" ||
+               key == "editor_decoration_left_margin" ||
+               key == "editor_text_left_margin") {
+        valid = parse_integer(value, integer);
+        if (key == "editor_tab_size")
+            valid = valid && (integer == 1 || integer == 2 || integer == 4 || integer == 8);
+        else if (key == "editor_minimap_columns")
+            valid = valid && integer >= 0 && integer <= 200;
+        else
+            valid = valid && integer >= 0 && integer <= 4;
+        if (valid && key == "editor_tab_size")
+            settings.editor_options.tab_size = integer;
+        else if (valid && key == "editor_minimap_columns")
+            settings.editor_options.minimap_columns = integer;
+        else if (valid && key == "editor_line_number_left_margin")
+            settings.editor_options.line_number_left_margin = integer;
+        else if (valid && key == "editor_decoration_left_margin")
+            settings.editor_options.decoration_left_margin = integer;
         else if (valid)
-            settings.graph_preferences.edge_weights = std::move(values);
+            settings.editor_options.text_left_margin = integer;
+    } else if (key == "editor_line_spacing") {
+        valid = parse_float(value, floating) && floating >= 1.0f && floating <= 2.0f;
+        if (valid)
+            settings.editor_options.line_spacing = floating;
+    } else if (key.starts_with("editor_")) {
+        bool* option = nullptr;
+        if (key == "editor_palette_light") option = &settings.editor_options.light_palette;
+        else if (key == "editor_read_only") option = &settings.editor_options.read_only;
+        else if (key == "editor_carets_visible") option = &settings.editor_options.carets_visible;
+        else if (key == "editor_overwrite") option = &settings.editor_options.overwrite;
+        else if (key == "editor_word_wrap") option = &settings.editor_options.word_wrap;
+        else if (key == "editor_line_folding") option = &settings.editor_options.line_folding;
+        else if (key == "editor_auto_indent") option = &settings.editor_options.auto_indent;
+        else if (key == "editor_insert_spaces_on_tabs") option = &settings.editor_options.insert_spaces_on_tabs;
+        else if (key == "editor_show_whitespaces") option = &settings.editor_options.show_whitespaces;
+        else if (key == "editor_show_spaces") option = &settings.editor_options.show_spaces;
+        else if (key == "editor_show_tabs") option = &settings.editor_options.show_tabs;
+        else if (key == "editor_show_line_numbers") option = &settings.editor_options.show_line_numbers;
+        else if (key == "editor_show_current_line_highlight") option = &settings.editor_options.show_current_line_highlight;
+        else if (key == "editor_show_matching_brackets") option = &settings.editor_options.show_matching_brackets;
+        else if (key == "editor_complete_matching_glyphs") option = &settings.editor_options.complete_matching_glyphs;
+        else if (key == "editor_show_minimap") option = &settings.editor_options.show_minimap;
+        else if (key == "editor_show_scrollbar_minimap") option = &settings.editor_options.show_scrollbar_minimap;
+        else if (key == "editor_show_pan_scroll_indicator") option = &settings.editor_options.show_pan_scroll_indicator;
+        else if (key == "editor_middle_mouse_pan") option = &settings.editor_options.middle_mouse_pan;
+        else if (key == "editor_find_replace") option = &settings.editor_options.find_replace;
+        if (option)
+            valid = parse_boolean(value, *option);
+        else
+            return;
+    } else if (key.starts_with("recent_file_")) {
+        int index = 0;
+        valid = parse_integer(key.substr(std::string_view("recent_file_").size()), index) &&
+                index >= 0 && index < 10 && !value.empty() &&
+                std::filesystem::path(value).extension() == ".sm";
+        if (valid) {
+            const auto position = static_cast<std::size_t>(index);
+            if (settings.recent_files.size() <= position)
+                settings.recent_files.resize(position + 1);
+            settings.recent_files[position] = std::string(value);
+        }
     } else {
         return;
     }
@@ -210,14 +238,36 @@ void UserSettings::write_all_func(
     buffer->appendf("ratio_value=%.6g\n", settings.ratio_value);
     buffer->appendf("size_width=%.6g\n", settings.size_width);
     buffer->appendf("size_height=%.6g\n", settings.size_height);
-    buffer->appendf("graph_fingerprint=%016llx\n",
-                    static_cast<unsigned long long>(settings.graph_preferences.fingerprint));
-    buffer->append("node_shapes=");
-    for (std::size_t i = 0; i < settings.graph_preferences.node_shapes.size(); ++i)
-        buffer->appendf("%s%d", i == 0 ? "" : ",", settings.graph_preferences.node_shapes[i]);
-    buffer->append("\nedge_weights=");
-    for (std::size_t i = 0; i < settings.graph_preferences.edge_weights.size(); ++i)
-        buffer->appendf("%s%d", i == 0 ? "" : ",", settings.graph_preferences.edge_weights[i]);
+    const auto& editor = settings.editor_options;
+    buffer->appendf("editor_tab_size=%d\n", editor.tab_size);
+    buffer->appendf("editor_line_spacing=%.6g\n", editor.line_spacing);
+    buffer->appendf("editor_minimap_columns=%d\n", editor.minimap_columns);
+    buffer->appendf("editor_palette_light=%d\n", editor.light_palette ? 1 : 0);
+    buffer->appendf("editor_read_only=%d\n", editor.read_only ? 1 : 0);
+    buffer->appendf("editor_carets_visible=%d\n", editor.carets_visible ? 1 : 0);
+    buffer->appendf("editor_overwrite=%d\n", editor.overwrite ? 1 : 0);
+    buffer->appendf("editor_word_wrap=%d\n", editor.word_wrap ? 1 : 0);
+    buffer->appendf("editor_line_folding=%d\n", editor.line_folding ? 1 : 0);
+    buffer->appendf("editor_auto_indent=%d\n", editor.auto_indent ? 1 : 0);
+    buffer->appendf("editor_insert_spaces_on_tabs=%d\n", editor.insert_spaces_on_tabs ? 1 : 0);
+    buffer->appendf("editor_show_whitespaces=%d\n", editor.show_whitespaces ? 1 : 0);
+    buffer->appendf("editor_show_spaces=%d\n", editor.show_spaces ? 1 : 0);
+    buffer->appendf("editor_show_tabs=%d\n", editor.show_tabs ? 1 : 0);
+    buffer->appendf("editor_show_line_numbers=%d\n", editor.show_line_numbers ? 1 : 0);
+    buffer->appendf("editor_show_current_line_highlight=%d\n", editor.show_current_line_highlight ? 1 : 0);
+    buffer->appendf("editor_show_matching_brackets=%d\n", editor.show_matching_brackets ? 1 : 0);
+    buffer->appendf("editor_complete_matching_glyphs=%d\n", editor.complete_matching_glyphs ? 1 : 0);
+    buffer->appendf("editor_show_minimap=%d\n", editor.show_minimap ? 1 : 0);
+    buffer->appendf("editor_show_scrollbar_minimap=%d\n", editor.show_scrollbar_minimap ? 1 : 0);
+    buffer->appendf("editor_show_pan_scroll_indicator=%d\n", editor.show_pan_scroll_indicator ? 1 : 0);
+    buffer->appendf("editor_middle_mouse_pan=%d\n", editor.middle_mouse_pan ? 1 : 0);
+    buffer->appendf("editor_find_replace=%d\n", editor.find_replace ? 1 : 0);
+    buffer->appendf("editor_line_number_left_margin=%d\n", editor.line_number_left_margin);
+    buffer->appendf("editor_decoration_left_margin=%d\n", editor.decoration_left_margin);
+    buffer->appendf("editor_text_left_margin=%d\n", editor.text_left_margin);
+    for (std::size_t i = 0; i < settings.recent_files.size() && i < 10; ++i)
+        buffer->appendf("recent_file_%d=%s\n", static_cast<int>(i),
+                        settings.recent_files[i].c_str());
     buffer->append("\n\n");
 }
 
@@ -232,11 +282,128 @@ void UserSettings::initialize(DiagnosticLog* log) {
     handler.UserData = this;
     ImGui::AddSettingsHandler(&handler);
     ImGui::LoadIniSettingsFromDisk(ImGui::GetIO().IniFilename);
+    if (prune_recent_files())
+        sync();
 }
 
 void UserSettings::sync() const {
     if (ImGui::GetCurrentContext())
         ImGui::MarkIniSettingsDirty();
+}
+
+void UserSettings::apply_editor_options(TextEditor& editor) const {
+    const auto& options = editor_options;
+    editor.SetTabSize(static_cast<std::size_t>(options.tab_size));
+    editor.SetLineSpacing(options.line_spacing);
+    editor.SetMiniMapColumns(static_cast<std::size_t>(options.minimap_columns));
+    editor.SetReadOnlyEnabled(options.read_only);
+    editor.SetCaretsVisible(options.carets_visible);
+    editor.SetOverwriteEnabled(options.overwrite);
+    editor.SetWordWrapEnabled(options.word_wrap);
+    editor.SetShowMatchingBrackets(options.show_matching_brackets);
+    editor.SetLineFoldingEnabled(options.line_folding);
+    editor.SetAutoIndentEnabled(options.auto_indent);
+    editor.SetInsertSpacesOnTabs(options.insert_spaces_on_tabs);
+    editor.SetShowWhitespacesEnabled(options.show_whitespaces);
+    editor.SetShowSpacesEnabled(options.show_spaces);
+    editor.SetShowTabsEnabled(options.show_tabs);
+    editor.SetShowLineNumbersEnabled(options.show_line_numbers);
+    editor.SetShowCurrentLineHighlightEnabled(options.show_current_line_highlight);
+    editor.SetCompletePairedGlyphs(options.complete_matching_glyphs);
+    editor.SetShowMiniMapEnabled(options.show_minimap);
+    editor.SetShowScrollbarMiniMapEnabled(options.show_scrollbar_minimap);
+    editor.SetShowPanScrollIndicatorEnabled(options.show_pan_scroll_indicator);
+    if (options.middle_mouse_pan)
+        editor.SetMiddleMousePanMode();
+    else
+        editor.SetMiddleMouseScrollMode();
+    editor.SetFindReplaceEnabled(options.find_replace);
+    editor.SetLineNumberLeftMargin(static_cast<std::size_t>(options.line_number_left_margin));
+    editor.SetDecorationLeftMargin(static_cast<std::size_t>(options.decoration_left_margin));
+    editor.SetTextLeftMargin(static_cast<std::size_t>(options.text_left_margin));
+    if (options.light_palette) {
+        ImGui::StyleColorsLight();
+        editor.SetPalette(TextEditor::GetLightPalette());
+    } else {
+        ImGui::StyleColorsDark();
+        editor.SetPalette(TextEditor::GetDarkPalette());
+    }
+}
+
+void UserSettings::capture_editor_options(const TextEditor& editor) {
+    auto& options = editor_options;
+    options.tab_size = static_cast<int>(editor.GetTabSize());
+    options.line_spacing = editor.GetLineSpacing();
+    options.minimap_columns = static_cast<int>(editor.GetMiniMapColumns());
+    options.read_only = editor.IsReadOnlyEnabled();
+    options.carets_visible = editor.IsCaretsVisible();
+    options.overwrite = editor.IsOverwriteEnabled();
+    options.word_wrap = editor.IsWordWrapEnabled();
+    options.line_folding = editor.IsLineFoldingEnabled();
+    options.auto_indent = editor.IsAutoIndentEnabled();
+    options.insert_spaces_on_tabs = editor.IsInsertSpacesOnTabs();
+    options.show_whitespaces = editor.IsShowWhitespacesEnabled();
+    options.show_spaces = editor.IsShowSpacesEnabled();
+    options.show_tabs = editor.IsShowTabsEnabled();
+    options.show_line_numbers = editor.IsShowLineNumbersEnabled();
+    options.show_current_line_highlight = editor.IsShowCurrentLineHighlightEnabled();
+    options.show_matching_brackets = editor.IsShowingMatchingBrackets();
+    options.complete_matching_glyphs = editor.IsCompletingPairedGlyphs();
+    options.show_minimap = editor.IsShowMiniMapEnabled();
+    options.show_scrollbar_minimap = editor.IsShowScrollbarMiniMapEnabled();
+    options.show_pan_scroll_indicator = editor.IsShowPanScrollIndicatorEnabled();
+    options.middle_mouse_pan = editor.IsMiddleMousePanMode();
+    options.find_replace = editor.IsFindReplaceEnabled();
+    options.line_number_left_margin = static_cast<int>(editor.GetLineNumberLeftMargin());
+    options.decoration_left_margin = static_cast<int>(editor.GetDecorationLeftMargin());
+    options.text_left_margin = static_cast<int>(editor.GetTextLeftMargin());
+}
+
+bool UserSettings::record_recent_file(const std::filesystem::path& path) {
+    if (path.extension() != ".sm") {
+        write_log(log_, LogLevel::warning, "Settings",
+                  "Not adding non-.sm file to recent files: '" + path.string() + "'");
+        return false;
+    }
+    std::error_code error;
+    const auto absolute = std::filesystem::absolute(path, error);
+    if (error) {
+        write_log(log_, LogLevel::error, "Settings",
+                  "Cannot normalize recent file '" + path.string() + "': " + error.message());
+        return false;
+    }
+    const auto normalized = absolute.lexically_normal().string();
+    std::erase(recent_files, normalized);
+    recent_files.insert(recent_files.begin(), normalized);
+    if (recent_files.size() > 10)
+        recent_files.resize(10);
+    return true;
+}
+
+bool UserSettings::prune_recent_files() {
+    const auto previous_size = recent_files.size();
+    std::vector<std::string> valid;
+    valid.reserve(std::min<std::size_t>(recent_files.size(), 10));
+    for (const auto& file : recent_files) {
+        if (file.empty() || std::filesystem::path(file).extension() != ".sm")
+            continue;
+        std::error_code error;
+        const bool exists = std::filesystem::is_regular_file(file, error);
+        if (error) {
+            if (error != std::errc::no_such_file_or_directory &&
+                error != std::errc::not_a_directory) {
+                write_log(log_, LogLevel::warning, "Settings",
+                          "Cannot inspect recent file '" + file + "': " + error.message());
+                valid.push_back(file);
+            }
+        } else if (exists &&
+                   std::find(valid.begin(), valid.end(), file) == valid.end() &&
+                   valid.size() < 10) {
+            valid.push_back(file);
+        }
+    }
+    recent_files = std::move(valid);
+    return recent_files.size() != previous_size;
 }
 
 void UserSettings::capture_graph(const dot_layout::DirectedGraph& graph) {

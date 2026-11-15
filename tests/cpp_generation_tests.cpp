@@ -289,6 +289,25 @@ void test_editor_menu(const std::filesystem::path& directory) {
     require(!selector.IsOpen() && app.input_file == open_path.string() &&
                 app.editor->GetText() == source,
             "Selected .sm file was not opened");
+    const auto recent_path = open_path.lexically_normal().string();
+    require(app.settings.recent_files.size() == 1 &&
+                app.settings.recent_files.front() == recent_path,
+            "Successfully opened .sm file was not added to recent files");
+
+    editor_frame(550, 350);
+    editor_window = ImGui::FindWindowByName("SMC Editor");
+    const auto recent_menu_bar_id = editor_window->GetID("##MenuBar");
+    click(find_item(editor_window, ImHashStr("file", 0, recent_menu_bar_id), "file"));
+    auto* recent_file_menu = ImGui::GetCurrentContext()->OpenPopupStack[0].Window;
+    click(find_item(recent_file_menu, recent_file_menu->GetID("open recent"), "open recent"));
+    require(ImGui::GetCurrentContext()->OpenPopupStack.size() > 1 &&
+                ImGui::GetCurrentContext()->OpenPopupStack[1].Window,
+            "Open recent submenu did not open");
+    auto* recent_files_popup = ImGui::GetCurrentContext()->OpenPopupStack[1].Window;
+    click(find_item(recent_files_popup, recent_files_popup->GetID(recent_path.c_str()),
+                    recent_path.c_str()));
+    require(app.input_file == open_path.string() && app.editor->GetText() == source,
+            "Recent-file menu item did not reopen its .sm file");
 
     app.editor.reset();
     ImGui::DestroyContext();

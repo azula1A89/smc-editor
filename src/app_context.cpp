@@ -15,20 +15,23 @@ AppContext::AppContext() = default;
 AppContext::~AppContext() = default;
 
 void AppContext::initialize(std::string source_file, std::function<void()> result_ready) {
-    settings.initialize(&log);
-
     input_file = std::move(source_file);
     editor = std::make_unique<TextEditor>();
     autocomplete = std::make_unique<TrieAutoComplete>();
     autocomplete->Connect(editor.get());
     editor->SetLanguage(smc_editor::language());
+    settings.initialize(&log);
+    settings.apply_editor_options(*editor);
 
     const auto contents = read_input_file(input_file, &log);
-    if (contents)
+    if (contents) {
         editor->SetText(*contents);
-    else
+        if (settings.record_recent_file(input_file))
+            settings.sync();
+    } else {
         log.write(LogLevel::warning, "Application",
                   "Displaying the built-in example graph until valid SMC is available.");
+    }
 
     editor_text = editor->GetText();
     line_offsets = source_line_offsets(editor_text);
