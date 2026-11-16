@@ -552,7 +552,7 @@ void render_graph_window(AppContext& app) {
     };
 
     {
-        FontSize font_size(14.0f);
+        FontSize font_size(13.0f);
 
         const ImRect content = ImGui::GetCurrentWindow()->ContentRegionRect;
         const bool over_canvas = ImGui::IsWindowHovered() &&
