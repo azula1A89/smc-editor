@@ -34,6 +34,7 @@ void AppContext::initialize(std::string source_file, std::function<void()> resul
     }
 
     editor_text = editor->GetText();
+    saved_text = editor_text;
     line_offsets = source_line_offsets(editor_text);
     canvas.asynchronous = true;
     canvas.options.rank_direction = settings.rank_direction;
@@ -43,4 +44,17 @@ void AppContext::initialize(std::string source_file, std::function<void()> resul
     coordinator = std::make_unique<AnalysisCoordinator>(
         contents.has_value(), AnalysisCoordinator::Clock::now());
     worker = std::make_unique<AnalysisWorker>(std::move(result_ready));
+}
+
+bool AppContext::document_modified() const {
+    return editor && editor->GetText() != saved_text;
+}
+
+std::string AppContext::document_title() const {
+    auto title = std::filesystem::path(input_file).filename().string();
+    if (title.empty())
+        title = "SMC Editor";
+    if (document_modified())
+        title += " *";
+    return title;
 }

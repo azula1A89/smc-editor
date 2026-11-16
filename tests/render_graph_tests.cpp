@@ -246,8 +246,20 @@ void test_ast_menu() {
         editor_frame(p.x, p.y, false);
     };
     editor_frame(800, 500);
-    const auto bar = ImGui::FindWindowByName("SMC Editor")->MenuBarRect();
-    click_at(ImVec2(bar.Min.x + 30.0f, (bar.Min.y + bar.Max.y) * 0.5f));
+    auto* editor_window = ImGui::FindWindowByName("SMC Editor");
+    const auto bar = editor_window->MenuBarRect();
+    const auto ast_id = ImHashStr("ast", 0, editor_window->GetID("##MenuBar"));
+    const float bar_y = (bar.Min.y + bar.Max.y) * 0.5f;
+    bool found_ast = false;
+    for (float x = bar.Min.x + 2.0f; x < bar.Max.x; x += 2.0f) {
+        editor_frame(x, bar_y);
+        if (ImGui::GetCurrentContext()->HoveredId == ast_id) {
+            click_at(ImVec2(x, bar_y));
+            found_ast = true;
+            break;
+        }
+    }
+    require(found_ast, "AST menu item not found");
     editor_frame(800, 500);
     auto& popup_stack = ImGui::GetCurrentContext()->OpenPopupStack;
     require(!popup_stack.empty() && popup_stack[0].Window, "AST Nodes menu did not open");
@@ -273,7 +285,7 @@ void test_ast_menu() {
             if (ImGui::GetCurrentContext()->HoveredId == id)
                 return ImVec2(x, y);
         }
-        throw std::runtime_error("AST tree item not found");
+        throw std::runtime_error(std::string("AST tree item not found in ") + popup->Name);
     };
     const auto expand_tree = [&](ImGuiID id, int depth) {
         const auto row = find_tree(id);

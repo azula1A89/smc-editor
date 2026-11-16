@@ -13,6 +13,7 @@ void draw_dockspace();
 void initialize_default_docking_layout_if_missing(
     ImGuiID dockspace_id, ImVec2 size, const char* ini_filename);
 void render_editor_window(AppContext& app);
+void request_window_close(AppContext& app);
 void update_graph_focus(AppContext& app);
 void select_graph_source(AppContext& app, const SourceSegment& source);
 void render_graph_window(AppContext& app);

@@ -1,6 +1,5 @@
 #include <algorithm>
 #include <chrono>
-#include <filesystem>
 #include <string>
 #include <utility>
 
@@ -36,20 +35,17 @@ void render_frame(GLFWwindow* window) {
         ~RenderingGuard() { flag = false; }
     } guard(rendering);
 
-    auto title = std::filesystem::path(app->input_file).filename().string();
-    if (title.empty())
-        title = "SMC Editor";
-    // Repeated title updates can themselves wake GLFW's event wait on X11.
-    if (title != app->window_title) {
-        glfwSetWindowTitle(window, title.c_str());
-        app->window_title = std::move(title);
-    }
-
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
     draw_dockspace();
     render_editor_window(*app);
+    auto title = app->document_title();
+    // Repeated title updates can themselves wake GLFW's event wait on X11.
+    if (title != app->window_title) {
+        glfwSetWindowTitle(window, title.c_str());
+        app->window_title = std::move(title);
+    }
 
     if (auto result = app->worker->take_result())
         app->coordinator->accept(std::move(*result), app->canvas, app->log, app->editor.get());
@@ -160,7 +156,13 @@ int run_application(int argc, char** argv) {
         });
 
     int settling_frames = 0;
-    while (glfwWindowShouldClose(window) == GLFW_FALSE) {
+    while (!app.close_confirmed) {
+        if (glfwWindowShouldClose(window) == GLFW_TRUE) {
+            glfwSetWindowShouldClose(window, GLFW_FALSE);
+            request_window_close(app);
+            if (app.close_confirmed)
+                break;
+        }
         const auto frame_start = AnalysisCoordinator::Clock::now();
         render_frame(window);
         const auto& context = *ImGui::GetCurrentContext();

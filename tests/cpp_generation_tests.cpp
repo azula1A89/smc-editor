@@ -74,6 +74,7 @@ void test_editor_menu(const std::filesystem::path& directory) {
     app.coordinator = std::make_unique<AnalysisCoordinator>(false, AnalysisCoordinator::Clock::now());
     app.editor->SetText(source);
     app.editor_text = source;
+    app.saved_text = app.editor->GetText();
     app.input_file = (directory / "menu.sm").string();
 
     ImGui::CreateContext();
@@ -308,6 +309,151 @@ void test_editor_menu(const std::filesystem::path& directory) {
                     recent_path.c_str()));
     require(app.input_file == open_path.string() && app.editor->GetText() == source,
             "Recent-file menu item did not reopen its .sm file");
+
+    const auto file_menu_action = [&](const char* label) {
+        editor_frame(550, 350);
+        auto* window = ImGui::FindWindowByName("SMC Editor");
+        const auto bar = window->GetID("##MenuBar");
+        click(find_item(window, ImHashStr("file", 0, bar), "file"));
+        auto* menu = ImGui::GetCurrentContext()->OpenPopupStack[0].Window;
+        click(find_item(menu, menu->GetID(label), label));
+    };
+    const auto type_filename = [&](const char* name) {
+        editor_frame(550, 350);
+        io.AddInputCharactersUTF8(name);
+        editor_frame(550, 350);
+    };
+    const auto unsaved_popup = [&]() {
+        editor_frame(550, 350);
+        auto* popup = ImGui::FindWindowByName("Unsaved changes");
+        require(popup && popup->Active, "Unsaved changes confirmation was not displayed");
+        return popup;
+    };
+
+    file_menu_action("new");
+    require(selector.IsOpen(), "New did not open the save selector");
+    type_filename("AppClass.sm");
+    click_button(selector_main_area(), "Save");
+    const auto new_path = directory / "AppClass.sm";
+    const std::string expected =
+        "%start StartMap::Start\n%class AppClass\n%header AppClass.h\n\n"
+        "%map StartMap\n%%\nStart\n{\n\n}\n%%\n";
+    require(app.input_file == new_path.string() && read_file(new_path) == expected &&
+                app.editor->GetText() == expected && !app.document_modified() &&
+                app.document_title() == "AppClass.sm",
+            "New file was not created and opened with the expected template");
+
+    app.editor->ReplaceSectionText({0, 0}, {0, 0}, "// changed\n");
+    require(app.document_modified() && app.document_title() == "AppClass.sm *",
+            "Changed document was not marked modified in the title");
+    app.editor->Undo();
+    require(!app.document_modified() && app.document_title() == "AppClass.sm",
+            "Restoring saved text did not clear modified state and title");
+    app.editor->SetText(expected + "// changed\n");
+    editor_frame(550, 350);
+    io.AddKeyEvent(ImGuiMod_Ctrl, true);
+    io.AddKeyEvent(ImGuiKey_S, true);
+    editor_frame(550, 350);
+    io.AddKeyEvent(ImGuiKey_S, false);
+    io.AddKeyEvent(ImGuiMod_Ctrl, false);
+    editor_frame(550, 350);
+    require(read_file(new_path) == app.editor->GetText() && !app.document_modified(),
+            "Ctrl+S did not save and clear the modified state");
+
+    app.editor->SetText(expected + "// unsaved\n");
+    file_menu_action("open");
+    click_button(unsaved_popup(), "Cancel");
+    require(!selector.IsOpen() && app.input_file == new_path.string() &&
+                app.document_modified(), "Cancel did not preserve the modified document");
+    file_menu_action("open");
+    click_button(unsaved_popup(), "Save");
+    require(selector.IsOpen() && !app.document_modified() &&
+                read_file(new_path) == expected + "// unsaved\n",
+            "Save before opening did not save and continue");
+    editor_frame(550, 350);
+    key(ImGuiKey_Escape);
+    require(!selector.IsOpen(), "Open selector remained open after cancellation");
+    app.editor->SetText(expected + "// discard\n");
+    file_menu_action("new");
+    click_button(unsaved_popup(), "Discard");
+    require(selector.IsOpen() && app.document_modified(),
+            "Discard did not open new selector while retaining current content");
+    editor_frame(550, 350);
+    request_window_close(app);
+    click_button(unsaved_popup(), "Cancel");
+    require(!selector.IsOpen() && !app.close_confirmed && app.document_modified(),
+            "Canceling close from the selector did not preserve the current contents");
+
+    request_window_close(app);
+    click_button(unsaved_popup(), "Cancel");
+    require(!app.close_confirmed && app.document_modified(),
+            "Canceling close did not retain the modified document");
+    request_window_close(app);
+    click_button(unsaved_popup(), "Discard");
+    require(app.close_confirmed, "Discarding changes did not confirm close");
+    app.close_confirmed = false;
+    app.editor->SetText(app.saved_text);
+
+    file_menu_action("new");
+    type_filename("Invalid-Name");
+    click_button(selector_main_area(), "Save");
+    require(!std::filesystem::exists(directory / "Invalid-Name.sm") &&
+                app.input_file == new_path.string() &&
+                app.log.snapshot().records.back().level == LogLevel::error,
+            "Invalid class name was not rejected");
+
+    file_menu_action("new");
+    type_filename("AppClass");
+    click_button(selector_main_area(), "Save");
+    auto* overwrite = ImGui::FindWindowByName("Overwrite source file?");
+    require(overwrite && overwrite->Active &&
+                read_file(new_path) == app.saved_text,
+            "Appending .sm did not require confirmation for an existing file");
+    click_button(overwrite, "Cancel");
+    require(read_file(new_path) == app.saved_text, "Canceling overwrite changed the file");
+
+    file_menu_action("new");
+    type_filename("AppClass");
+    click_button(selector_main_area(), "Save");
+    overwrite = ImGui::FindWindowByName("Overwrite source file?");
+    require(overwrite && overwrite->Active, "Overwrite confirmation did not reopen");
+    click_button(overwrite, "Overwrite");
+    require(read_file(new_path) == expected && !app.document_modified(),
+            "Confirmed overwrite did not create the template");
+
+    file_menu_action("new");
+    type_filename("Another");
+    click_button(selector_main_area(), "Save");
+    const auto another_path = directory / "Another.sm";
+    require(app.input_file == another_path.string() &&
+                read_file(another_path).find("%class Another\n%header Another.h\n") !=
+                    std::string::npos && !app.document_modified(),
+            "Missing .sm extension was not added to a new file");
+
+    app.editor->SetText("recent unsaved");
+    editor_frame(550, 350);
+    auto* recent_editor = ImGui::FindWindowByName("SMC Editor");
+    const auto recent_bar = recent_editor->GetID("##MenuBar");
+    click(find_item(recent_editor, ImHashStr("file", 0, recent_bar), "file"));
+    auto* recent_menu = ImGui::GetCurrentContext()->OpenPopupStack[0].Window;
+    click(find_item(recent_menu, recent_menu->GetID("open recent"), "open recent"));
+    auto* recent_popup = ImGui::GetCurrentContext()->OpenPopupStack[1].Window;
+    const auto appclass_recent = new_path.lexically_normal().string();
+    click(find_item(recent_popup, recent_popup->GetID(appclass_recent.c_str()),
+                    appclass_recent.c_str()));
+    click_button(unsaved_popup(), "Cancel");
+    require(app.input_file == another_path.string() && app.document_modified(),
+            "Canceling a recent-file switch did not preserve the current document");
+
+    app.editor->SetText("unsaved");
+    app.input_file = (directory / "missing" / "unwritable.sm").string();
+    request_window_close(app);
+    click_button(unsaved_popup(), "Save");
+    require(!app.close_confirmed && app.document_modified() &&
+                app.pending_file_action == FileAction::close_window,
+            "Failed save should not close or clear unsaved state");
+    click_button(unsaved_popup(), "Cancel");
+    app.input_file = another_path.string();
 
     app.editor.reset();
     ImGui::DestroyContext();

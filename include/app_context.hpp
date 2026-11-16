@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -19,6 +20,8 @@
 class TrieAutoComplete;
 class AnalysisWorker;
 class AnalysisCoordinator;
+
+enum class FileAction { none, new_file, open_file, open_recent, close_window };
 
 enum class GraphObjectKind { state_map, state, transition, guard };
 
@@ -95,6 +98,8 @@ public:
     AppContext& operator=(const AppContext&) = delete;
 
     void initialize(std::string input_file, std::function<void()> result_ready = {});
+    bool document_modified() const;
+    std::string document_title() const;
 
     UserSettings settings;
     std::unique_ptr<TextEditor> editor;
@@ -104,6 +109,13 @@ public:
     std::string input_file;
     std::string window_title;
     std::string editor_text;
+    std::string saved_text;
+    FileAction pending_file_action = FileAction::none;
+    std::filesystem::path pending_file_path;
+    bool open_unsaved_popup = false;
+    std::optional<std::filesystem::path> pending_new_file_overwrite;
+    bool close_requested = false;
+    bool close_confirmed = false;
     std::vector<std::size_t> line_offsets;
     CanvasState canvas;
     DiagnosticViewState diagnostic_view;

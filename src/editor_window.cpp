@@ -3,10 +3,12 @@
 #include <FileSelector.h>
 
 #include <exception>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -35,6 +37,7 @@ bool open_source_file(AppContext& app, const std::filesystem::path& path) {
     app.input_file = path.string();
     app.editor->SetText(*contents);
     app.editor_text = app.editor->GetText();
+    app.saved_text = app.editor_text;
     app.line_offsets = source_line_offsets(app.editor_text);
     app.coordinator->text_changed(AnalysisCoordinator::Clock::now(), app.editor.get());
     app.focus.reset();
@@ -44,31 +47,36 @@ bool open_source_file(AppContext& app, const std::filesystem::path& path) {
     return true;
 }
 
-void save_source_file(AppContext& app) {
+bool save_source_file(AppContext& app) {
     if (app.input_file.empty()) {
         app.log.write(LogLevel::error, "File", "No source file is open.");
-        return;
+        return false;
     }
 
     std::ofstream output(app.input_file, std::ios::binary | std::ios::trunc);
     if (!output) {
         app.log.write(LogLevel::error, "File",
                       "Cannot save source file '" + app.input_file + "'");
-        return;
+        return false;
     }
 
     const auto contents = app.editor->GetText();
     output.write(contents.data(), static_cast<std::streamsize>(contents.size()));
     output.flush();
+    output.close();
     if (!output) {
         app.log.write(LogLevel::error, "File",
                       "Failed while saving source file '" + app.input_file + "'");
-        return;
+        return false;
     }
+    app.saved_text = contents;
     app.log.write(LogLevel::info, "File", "Saved '" + app.input_file + "'");
+    return true;
 }
 
-void request_file_selector(AppContext& app, bool select_directory) {
+enum class SelectorMode { open, create, directory };
+
+void request_file_selector(AppContext& app, SelectorMode mode) {
     try {
         auto& selector = FileSelector::Instance();
         if (selector.IsOpen()) {
@@ -83,11 +91,115 @@ void request_file_selector(AppContext& app, bool select_directory) {
                           "Cannot open folder '" + directory.string() + "'");
             return;
         }
-        const bool opened = select_directory ? selector.SelectDirectory() : selector.OpenFile(".sm");
+        const bool opened = mode == SelectorMode::directory ? selector.SelectDirectory() :
+                            mode == SelectorMode::create ? selector.SaveAs(directory) :
+                            selector.OpenFile(".sm");
         if (!opened)
             app.log.write(LogLevel::error, "File", "Cannot open file selector.");
     } catch (const std::exception& error) {
         app.log.write(LogLevel::error, "File", error.what());
+    }
+}
+
+bool valid_class_name(const std::string& name) {
+    static const std::unordered_set<std::string> keywords = {
+        "alignas", "alignof", "and", "and_eq", "asm", "auto", "bitand", "bitor",
+        "bool", "break", "case", "catch", "char", "char8_t", "char16_t", "char32_t",
+        "class", "compl", "concept", "const", "consteval", "constexpr", "constinit",
+        "const_cast", "continue", "co_await", "co_return", "co_yield", "decltype",
+        "default", "delete", "do", "double", "dynamic_cast", "else", "enum", "explicit",
+        "export", "extern", "false", "float", "for", "friend", "goto", "if", "inline",
+        "int", "long", "mutable", "namespace", "new", "noexcept", "not", "not_eq",
+        "nullptr", "operator", "or", "or_eq", "private", "protected", "public",
+        "register", "reinterpret_cast", "requires", "return", "short", "signed",
+        "sizeof", "static", "static_assert", "static_cast", "struct", "switch",
+        "template", "this", "thread_local", "throw", "true", "try", "typedef",
+        "typeid", "typename", "union", "unsigned", "using", "virtual", "void",
+        "volatile", "wchar_t", "while", "xor", "xor_eq"
+    };
+    const auto letter = [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+    };
+    return !name.empty() && letter(name.front()) &&
+           std::all_of(name.begin() + 1, name.end(), [&](char c) {
+               return letter(c) || (c >= '0' && c <= '9');
+           }) && !keywords.contains(name);
+}
+
+void create_source_file(AppContext& app, const std::filesystem::path& path) {
+    const auto name = path.stem().string();
+    const std::string contents = "%start StartMap::Start\n%class " + name +
+        "\n%header " + name + ".h\n\n%map StartMap\n%%\nStart\n{\n\n}\n%%\n";
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (!output) {
+        app.log.write(LogLevel::error, "File", "Cannot create source file '" + path.string() + "'");
+        return;
+    }
+    output.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+    output.flush();
+    output.close();
+    if (!output) {
+        app.log.write(LogLevel::error, "File", "Failed while creating source file '" + path.string() + "'");
+        return;
+    }
+    open_source_file(app, path);
+}
+
+void perform_file_action(AppContext& app, FileAction action, const std::filesystem::path& path) {
+    switch (action) {
+    case FileAction::new_file: request_file_selector(app, SelectorMode::create); break;
+    case FileAction::open_file: request_file_selector(app, SelectorMode::open); break;
+    case FileAction::open_recent: open_source_file(app, path); break;
+    case FileAction::close_window: app.close_confirmed = true; break;
+    case FileAction::none: break;
+    }
+}
+
+void request_file_action(AppContext& app, FileAction action,
+                         const std::filesystem::path& path = {}) {
+    if (app.pending_file_action != FileAction::none)
+        return;
+    if (!app.document_modified()) {
+        perform_file_action(app, action, path);
+        return;
+    }
+    app.pending_file_action = action;
+    app.pending_file_path = path;
+    app.open_unsaved_popup = true;
+}
+
+void render_unsaved_confirmation(AppContext& app) {
+    if (app.open_unsaved_popup) {
+        ImGui::OpenPopup("Unsaved changes");
+        app.open_unsaved_popup = false;
+    }
+    bool open = true;
+    if (ImGui::BeginPopupModal("Unsaved changes", &open, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Save changes to the current file?");
+        bool proceed = false;
+        bool cancel = false;
+        if (ImGui::Button("Save"))
+            proceed = save_source_file(app);
+        ImGui::SameLine();
+        if (ImGui::Button("Discard"))
+            proceed = true;
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel"))
+            cancel = true;
+        if (proceed || cancel) {
+            const auto action = app.pending_file_action;
+            const auto path = app.pending_file_path;
+            app.pending_file_action = FileAction::none;
+            app.pending_file_path.clear();
+            ImGui::CloseCurrentPopup();
+            if (proceed)
+                perform_file_action(app, action, path);
+        }
+        ImGui::EndPopup();
+    }
+    if (!open) {
+        app.pending_file_action = FileAction::none;
+        app.pending_file_path.clear();
     }
 }
 
@@ -97,7 +209,28 @@ void render_file_selector(AppContext& app) {
         return;
     if (selector.SelectedOpenFile()) {
         if (!open_source_file(app, selector.GetSelectedPath()))
-            request_file_selector(app, false);
+            request_file_selector(app, SelectorMode::open);
+    } else if (selector.SelectedSaveAs()) {
+        const auto selected = selector.GetSelectedPath();
+        auto path = selected;
+        if (path.extension().empty())
+            path += ".sm";
+        if (path.extension() != ".sm" || !valid_class_name(path.stem().string())) {
+            app.log.write(LogLevel::error, "File",
+                          "Use a .sm filename with a valid C++ class identifier.");
+            return;
+        }
+        std::error_code error;
+        const bool exists = std::filesystem::exists(path, error);
+        if (error) {
+            app.log.write(LogLevel::error, "File", "Cannot inspect '" + path.string() +
+                          "': " + error.message());
+        } else if (exists && path != selected) {
+            app.pending_new_file_overwrite = path;
+            ImGui::OpenPopup("Overwrite source file?");
+        } else {
+            create_source_file(app, path);
+        }
     } else if (selector.SelectedDirectory()) {
         try {
             auto files = generate_cpp_files(app.editor->GetText(), app.input_file);
@@ -116,6 +249,36 @@ void render_file_selector(AppContext& app) {
             app.log.write(LogLevel::error, "C++ generator", error.what());
         }
     }
+}
+
+void render_new_file_confirmation(AppContext& app) {
+    if (!app.pending_new_file_overwrite)
+        return;
+    bool open = true;
+    if (ImGui::BeginPopupModal("Overwrite source file?", &open, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped("Overwrite '%s'?", app.pending_new_file_overwrite->string().c_str());
+        if (ImGui::Button("Overwrite")) {
+            create_source_file(app, *app.pending_new_file_overwrite);
+            app.pending_new_file_overwrite.reset();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            app.pending_new_file_overwrite.reset();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    if (!open)
+        app.pending_new_file_overwrite.reset();
+}
+
+void handle_save_shortcut(AppContext& app) {
+    if (!FileSelector::Instance().IsOpen() && app.pending_file_action == FileAction::none &&
+        !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId) &&
+        ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyAlt && !ImGui::GetIO().KeyShift &&
+        !ImGui::GetIO().KeySuper && ImGui::IsKeyPressed(ImGuiKey_S, false))
+        save_source_file(app);
 }
 
 void render_cpp_generation_confirmation(AppContext& app) {
@@ -172,6 +335,10 @@ void render_ast_node(AppContext& app, const AstTreeView& ast, std::size_t index)
 
 } // namespace
 
+void request_window_close(AppContext& app) {
+    app.close_requested = true;
+}
+
 std::vector<SourceErrorMarker> source_error_markers(
     const smc::Diagnostics& diagnostics, std::string_view source_name,
     std::size_t line_count) {
@@ -219,11 +386,26 @@ void select_graph_source(AppContext& app, const SourceSegment& source) {
 }
 
 void render_editor_window(AppContext& app) {
+    if (app.close_requested) {
+        app.close_requested = false;
+        auto& selector = FileSelector::Instance();
+        if (selector.IsOpen()) {
+            if (ImGui::BeginPopupModal("###ImGuiFileSelector")) {
+                ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+            }
+            selector.Close();
+        }
+        request_file_action(app, FileAction::close_window);
+    }
     app.editor_visible = false;
     if (!ImGui::Begin("SMC Editor", nullptr, ImGuiWindowFlags_MenuBar)) {
         ImGui::End();
+        handle_save_shortcut(app);
         render_file_selector(app);
         render_cpp_generation_confirmation(app);
+        render_new_file_confirmation(app);
+        render_unsaved_confirmation(app);
         return;
     }
 
@@ -231,8 +413,10 @@ void render_editor_window(AppContext& app) {
     const auto previous_editor_options = app.settings.editor_options;
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("file")) {
+            if (ImGui::MenuItem("new"))
+                request_file_action(app, FileAction::new_file);
             if (ImGui::MenuItem("open"))
-                request_file_selector(app, false);
+                request_file_action(app, FileAction::open_file);
             if (app.settings.prune_recent_files())
                 app.settings.sync();
             if (ImGui::BeginMenu("open recent")) {
@@ -242,16 +426,16 @@ void render_editor_window(AppContext& app) {
                     const auto recent_files = app.settings.recent_files;
                     for (const auto& path : recent_files) {
                         if (ImGui::MenuItem(path.c_str()))
-                            open_source_file(app, path);
+                            request_file_action(app, FileAction::open_recent, path);
                     }
                 }
                 ImGui::EndMenu();
             }
-            if (ImGui::MenuItem("save"))
+            if (ImGui::MenuItem("save", "Ctrl+S"))
                 save_source_file(app);
             if (ImGui::BeginMenu("generate")) {
                 if (ImGui::MenuItem("generate .hpp and .cpp"))
-                    request_file_selector(app, true);
+                    request_file_selector(app, SelectorMode::directory);
                 ImGui::EndMenu();
             }
             ImGui::EndMenu();
@@ -361,8 +545,11 @@ void render_editor_window(AppContext& app) {
         ImGui::IsMouseClicked(ImGuiMouseButton_Left))
         app.canvas_focus.reset();
     ImGui::End();
+    handle_save_shortcut(app);
     render_file_selector(app);
     render_cpp_generation_confirmation(app);
+    render_new_file_confirmation(app);
+    render_unsaved_confirmation(app);
     if (!changed)
         return;
 
