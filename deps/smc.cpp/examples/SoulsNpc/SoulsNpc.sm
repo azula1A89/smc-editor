@@ -1,6 +1,6 @@
 %start NpcMap::Idle
 %class SoulsNpc
-%header SoulsNpc.h
+%header npc.h
 
 // Top-level behaviour. Combat is a pushed sub-machine (CombatMap).
 %map NpcMap
