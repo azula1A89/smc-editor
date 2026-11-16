@@ -1,9 +1,12 @@
+#include "smc/generator.hpp"
 #include "smc/parser.hpp"
 #include "smc/syntax_checker.hpp"
 
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -30,6 +33,7 @@ void print_diagnostics(const smc::Diagnostics& diagnostics) {
 
 int main(int argc, char** argv) {
     std::string input_file;
+    std::string output_directory;
     bool check_only = false;
     bool cpp_target = false;
 
@@ -44,7 +48,7 @@ int main(int argc, char** argv) {
                 std::cerr << "smc_cpp: -d requires an output directory\n";
                 return 2;
             }
-            ++index;
+            output_directory = argv[++index];
         } else if (!argument.empty() && argument.front() == '-') {
             std::cerr << "smc_cpp: unknown option '" << argument << "'\n";
             print_usage(std::cerr);
@@ -93,9 +97,47 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    print_diagnostics({smc::Diagnostic{
-        smc::DiagnosticSeverity::error,
-        fsm->location,
-        "C++ code generation is not implemented; use --check to validate the FSM."}});
-    return 1;
+    const std::filesystem::path input_path(input_file);
+    const auto output_path = output_directory.empty()
+                                 ? input_path.parent_path()
+                                 : std::filesystem::path(output_directory);
+    const auto stem = input_path.stem().string();
+    const auto header_path = output_path / (stem + ".hpp");
+    const auto source_path = output_path / (stem + ".cpp");
+    const auto header_name = header_path.filename().string();
+
+    std::ostringstream header_contents;
+    std::ostringstream source_contents;
+    try {
+        smc::CppHeaderGenerator header_generator(header_contents, header_name);
+        smc::CppSourceGenerator source_generator(source_contents, header_name);
+        fsm->accept(header_generator);
+        fsm->accept(source_generator);
+    } catch (const std::exception& error) {
+        std::cerr << "smc_cpp: C++ generation failed: " << error.what() << '\n';
+        return 1;
+    }
+
+    const auto write_output = [](const std::filesystem::path& path,
+                                 const std::string& contents) {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        if (!output) {
+            std::cerr << "smc_cpp: cannot open output file '" << path.string() << "'\n";
+            return false;
+        }
+        output.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+        output.flush();
+        if (!output) {
+            std::cerr << "smc_cpp: failed while writing output file '" << path.string()
+                      << "'\n";
+            return false;
+        }
+        return true;
+    };
+
+    if (!write_output(header_path, header_contents.str()) ||
+        !write_output(source_path, source_contents.str())) {
+        return 2;
+    }
+    return 0;
 }

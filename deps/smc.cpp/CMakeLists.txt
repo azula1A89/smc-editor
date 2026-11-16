@@ -50,5 +50,11 @@ if(BUILD_TESTING)
              COMMAND smc_cpp -c++ --check ${CMAKE_CURRENT_SOURCE_DIR}/SmcLexer.sm)
     add_test(NAME smc_cli_parser_grammar
              COMMAND smc_cpp -c++ --check ${CMAKE_CURRENT_SOURCE_DIR}/SmcParser.sm)
+    add_test(NAME smc_cli_generate
+             COMMAND ${CMAKE_COMMAND}
+                     "-DSMC_EXECUTABLE=$<TARGET_FILE:smc_cpp>"
+                     "-DSMC_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+                     "-DTEST_OUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/cli_generation"
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cli_generation.cmake)
     set_tests_properties(smc_cli_invalid PROPERTIES WILL_FAIL TRUE)
 endif()

@@ -22,14 +22,21 @@ Validate a state-machine file without generating code:
 ./build/smc_cpp -c++ --check SmcLexer.sm
 ```
 
-The documented option shape is accepted:
+Generate a header and source file next to the input (`SmcLexer.hpp` and
+`SmcLexer.cpp`):
 
 ```sh
-./build/smc_cpp -c++ -d . SmcLexer.sm
+./build/smc_cpp -c++ SmcLexer.sm
 ```
 
-The CLI still only validates: without `--check`, it reports that CLI generation
-is not implemented.
+Use `-d` to select another output directory. Existing files are overwritten.
+`--check` only validates the input and never writes generated files, including
+when `-d` is specified:
+
+```sh
+./build/smc_cpp -c++ -d generated SmcLexer.sm
+./build/smc_cpp -c++ --check -d generated SmcLexer.sm
+```
 
 ## C++ generator API
 
