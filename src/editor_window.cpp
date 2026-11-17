@@ -454,19 +454,19 @@ void render_editor_window(AppContext& app) {
         }
 		if (ImGui::BeginMenu("options")) {
 			if (ImGui::BeginMenu("Tab Size")) {
-				if (ImGui::MenuItem("1")) { app.editor->SetTabSize(1); }
-				if (ImGui::MenuItem("2")) { app.editor->SetTabSize(2); }
-				if (ImGui::MenuItem("4")) { app.editor->SetTabSize(4); }
-				if (ImGui::MenuItem("8")) { app.editor->SetTabSize(8); }
+				if (ImGui::MenuItem("1", NULL, app.editor->GetTabSize() == 1)) { app.editor->SetTabSize(1); }
+				if (ImGui::MenuItem("2", NULL, app.editor->GetTabSize() == 2)) { app.editor->SetTabSize(2); }
+				if (ImGui::MenuItem("4", NULL, app.editor->GetTabSize() == 4)) { app.editor->SetTabSize(4); }
+				if (ImGui::MenuItem("8", NULL, app.editor->GetTabSize() == 8)) { app.editor->SetTabSize(8); }
 				ImGui::EndMenu();
 			}
 
 			if (ImGui::BeginMenu("Line Spacing")) {
-				if (ImGui::MenuItem("1.0")) { app.editor->SetLineSpacing(1.0f); }
-				if (ImGui::MenuItem("1.25")) { app.editor->SetLineSpacing(1.25f); }
-				if (ImGui::MenuItem("1.5")) { app.editor->SetLineSpacing(1.5f); }
-				if (ImGui::MenuItem("1.75")) { app.editor->SetLineSpacing(1.75f); }
-				if (ImGui::MenuItem("2.0")) { app.editor->SetLineSpacing(2.0f); }
+				if (ImGui::MenuItem("1.0", NULL, app.editor->GetLineSpacing() == 1.0f)) { app.editor->SetLineSpacing(1.0f); }
+				if (ImGui::MenuItem("1.25", NULL, app.editor->GetLineSpacing() == 1.25f)) { app.editor->SetLineSpacing(1.25f); }
+				if (ImGui::MenuItem("1.5", NULL, app.editor->GetLineSpacing() == 1.25f)) { app.editor->SetLineSpacing(1.5f); }
+				if (ImGui::MenuItem("1.75", NULL, app.editor->GetLineSpacing() == 1.75f)) { app.editor->SetLineSpacing(1.75f); }
+				if (ImGui::MenuItem("2.0", NULL, app.editor->GetLineSpacing() == 2.0f)) { app.editor->SetLineSpacing(2.0f); }
 				ImGui::EndMenu();
 			}
 
@@ -477,12 +477,12 @@ void render_editor_window(AppContext& app) {
 			}
 
 			if (ImGui::BeginMenu("Color Palette")) {
-				if (ImGui::MenuItem("Dark")) {
+				if (ImGui::MenuItem("Dark", NULL, !app.settings.editor_options.light_palette)) {
                     ImGui::StyleColorsDark();
                     app.editor->SetPalette(app.editor->GetDarkPalette());
 				    app.settings.editor_options.light_palette = false;
                 }
-				if (ImGui::MenuItem("Light")) {
+				if (ImGui::MenuItem("Light", NULL, app.settings.editor_options.light_palette)) {
                     ImGui::StyleColorsLight();
                     app.editor->SetPalette(app.editor->GetLightPalette());
 				    app.settings.editor_options.light_palette = true;
