@@ -59,6 +59,11 @@ void testSettingsRoundTrip() {
         settings.rank_separation = 3.5f;
         settings.node_separation = 0.8f;
         settings.arrow_size = 12.0f;
+        settings.focus_color[0] = 0.125f;
+        settings.focus_color[1] = 0.5f;
+        settings.focus_color[2] = 0.875f;
+        settings.focus_thickness = 4.5f;
+        settings.secondary_focus_thickness = 2.5f;
         settings.compound = false;
         settings.ratio_selection = UserSettings::RatioSelection::Numeric;
         settings.ratio_value = 1.25f;
@@ -131,6 +136,11 @@ void testSettingsRoundTrip() {
                     settings.node_separation == 0.8f &&
                     settings.arrow_size == 12.0f && !settings.compound,
                 "Canvas settings were not restored");
+        require(settings.focus_color[0] == 0.125f && settings.focus_color[1] == 0.5f &&
+                    settings.focus_color[2] == 0.875f &&
+                    settings.focus_thickness == 4.5f &&
+                    settings.secondary_focus_thickness == 2.5f,
+                "Focus style settings were not restored");
         require(settings.ratio_selection == UserSettings::RatioSelection::Numeric &&
                     settings.ratio_value == 1.25f &&
                     settings.size_width == 10.5f && settings.size_height == 7.25f,
@@ -288,7 +298,9 @@ void testInvalidSettingsAreLogged() {
          std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".ini");
     {
         std::ofstream file(path);
-        file << "[UserSettings][Data]\nwindow_width=invalid\n";
+        file << "[UserSettings][Data]\nwindow_width=invalid\n"
+             << "focus_red=nan\nfocus_green=1.1\n"
+             << "focus_thickness=0\nsecondary_focus_thickness=101\n";
     }
     {
         const auto path_string = path.string();
@@ -298,10 +310,15 @@ void testInvalidSettingsAreLogged() {
         context.io().IniFilename = path_string.c_str();
         settings.initialize(&log);
         const auto records = log.snapshot().records;
-        require(records.size() == 1 && records[0].level == LogLevel::warning &&
+        require(records.size() == 5 && records[0].level == LogLevel::warning &&
                     records[0].source == "Settings" &&
                     records[0].detail.find("window_width") != std::string::npos,
                 "Invalid settings were not logged");
+        require(settings.focus_color[0] == 45.0f / 255.0f &&
+                    settings.focus_color[1] == 220.0f / 255.0f &&
+                    settings.focus_thickness == 3.0f &&
+                    settings.secondary_focus_thickness == 3.0f,
+                "Invalid focus style settings replaced defaults");
     }
     std::filesystem::remove(path);
 }

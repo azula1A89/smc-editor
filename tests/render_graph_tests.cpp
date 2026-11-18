@@ -397,6 +397,81 @@ bool hasVertexNear(ImVec2 point, ImU32 color, float tolerance = 3.0f) {
     return false;
 }
 
+void test_outgoing_focus() {
+    auto& app = test_app();
+    app.settings.canvas_scale = 1.0f;
+    app.settings.arrow_size = 0.0f;
+    app.settings.focus_color[0] = 1.0f;
+    app.settings.focus_color[1] = 0.0f;
+    app.settings.focus_color[2] = 0.0f;
+    app.settings.focus_thickness = 6.0f;
+    app.settings.secondary_focus_thickness = 8.0f;
+    app.canvas.graph = {
+        {{"a", "A"}, {"b", "B"}, {"c", "C"}},
+        {{"a", "b", ""}, {"a", "b", ""}, {"a", "a", ""},
+         {"b", "a", ""}, {"c", "b", ""}}};
+    dot_layout::LayoutResult layout;
+    layout.bounds = {0, 0, 600, 400};
+    layout.nodes = {{"a", {500, 300}, 40, 30},
+                    {"b", {500, 200}, 40, 30},
+                    {"c", {500, 100}, 40, 30}};
+    for (std::size_t i = 0; i < app.canvas.graph.edges.size(); ++i) {
+        const auto& edge = app.canvas.graph.edges[i];
+        const double y = 350.0 - 50.0 * i;
+        layout.edges.push_back({edge.from, edge.to, {{{50, y}, {250, y}}},
+                                std::nullopt, {std::nullopt}});
+    }
+    app.canvas.layout = layout;
+    app.canvas.dirty = false;
+    app.canvas.recently_replaced = false;
+    app.canvas.origin_x = 100.0f;
+    app.canvas.origin_y = 100.0f;
+    app.canvas.origin_initialized = true;
+
+    const auto render = [&](std::optional<GraphFocus> focus) {
+        app.canvas.previous_focus = focus;
+        frame(800, 500, std::nullopt, std::nullopt, focus);
+    };
+    const auto edge_width = [&](int index, ImU32 color) {
+        const float y = 150.0f + 50.0f * index;
+        float min_y = y + 20.0f;
+        float max_y = y - 20.0f;
+        for (const ImDrawVert& vertex : ImGui::FindWindowByName("canvas")->DrawList->VtxBuffer) {
+            if ((vertex.col & 0x00ffffff) == (color & 0x00ffffff) &&
+                vertex.pos.x >= 149.0f && vertex.pos.x <= 351.0f &&
+                std::abs(vertex.pos.y - y) < 15.0f) {
+                min_y = std::min(min_y, vertex.pos.y);
+                max_y = std::max(max_y, vertex.pos.y);
+            }
+        }
+        return max_y - min_y;
+    };
+    const ImU32 line_color = ImGui::GetColorU32(ImGuiCol_PlotLines);
+    render(std::nullopt);
+    const float normal_width = edge_width(0, line_color);
+    require(normal_width > 0.0f, "Normal edge was not rendered");
+
+    render(GraphFocus{GraphObjectKind::state, {0}});
+    require(hasVertexColor(IM_COL32(255, 0, 0, 255)),
+            "Configured primary focus color was not rendered");
+    for (int i = 0; i < 3; ++i)
+        require(edge_width(i, line_color) > normal_width + 5.0f,
+                "Outgoing, parallel or self-loop edge was not thickened");
+    for (int i = 3; i < 5; ++i)
+        require(std::abs(edge_width(i, line_color) - normal_width) < 0.1f,
+                "Incoming or unrelated edge was incorrectly thickened");
+
+    render(GraphFocus{GraphObjectKind::state, {0, 1, 999}});
+    require(edge_width(3, line_color) > normal_width + 5.0f &&
+                std::abs(edge_width(4, line_color) - normal_width) < 0.1f,
+            "Multiple focused nodes did not highlight their outgoing edges");
+
+    render(GraphFocus{GraphObjectKind::transition, {3}});
+    require(edge_width(3, IM_COL32(255, 0, 0, 255)) > normal_width + 3.0f &&
+                std::abs(edge_width(0, line_color) - normal_width) < 0.1f,
+            "Focused edge did not use the configured primary style");
+}
+
 void checkClusterBorders() {
     const dot_layout::DirectedGraph graph{
         {{"a", "A"}, {"b", "B"}, {"c", "C"}},
@@ -492,6 +567,23 @@ int main() {
         click(default_ratio.x, default_ratio.y);
         frame(800, 500);
         require(canvasGeometry() == original, "Default ratio did not restore canvas");
+        settings = menuWindow(0);
+        const ImVec2 focus_style = findItem(settings, "Focus style");
+        click(focus_style.x, focus_style.y);
+        ImGuiWindow* focus_menu = menuWindow(1);
+        const ImVec2 focus_thickness = findItem(focus_menu, "Focus thickness");
+        const float old_thickness = test_app().settings.focus_thickness;
+        drag(focus_thickness, 40.0f);
+        require(test_app().settings.focus_thickness != old_thickness,
+                "Focus thickness control did not update settings");
+        focus_menu = menuWindow(1);
+        const ImVec2 outgoing_thickness = findItem(focus_menu, "Outgoing edge thickness");
+        const float old_outgoing_thickness = test_app().settings.secondary_focus_thickness;
+        drag(outgoing_thickness, 40.0f);
+        require(test_app().settings.secondary_focus_thickness != old_outgoing_thickness,
+                "Outgoing edge thickness control did not update settings");
+        test_app().settings.focus_thickness = old_thickness;
+        test_app().settings.secondary_focus_thickness = old_outgoing_thickness;
         click(settings_button.x, settings_button.y);
         const auto fsm_graph = make_graph(std::string(TEST_SOURCE_DIR) + "/tests/fsm_graph.sm");
         require(fsm_graph.has_value(), "Could not load FSM for rendering");
@@ -519,6 +611,7 @@ int main() {
         require(canvasGeometry() != fsm_canvas, "State label did not affect rendering");
         test_canvas_selection();
         test_ast_menu();
+        test_outgoing_focus();
         ImGui::DestroyContext();
     } catch (const std::exception& error) {
         std::cerr << "render_graph_tests: " << error.what() << '\n';

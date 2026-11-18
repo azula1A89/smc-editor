@@ -1,10 +1,12 @@
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <imgui.h>
@@ -82,17 +84,19 @@ void draw_spline_with_arrow(ImDrawList *draw_list, const std::vector<ImVec2> &sp
     }
 }
 
-void drag_positive_value(const char* label, float& value, float speed, DiagnosticLog* log) {
+bool drag_positive_value(const char* label, float& value, float speed, DiagnosticLog* log) {
     float edited = value;
     if (ImGui::DragFloat(label, &edited, speed, 0.01f, 100.0f,
                          "%.2f", ImGuiSliderFlags_AlwaysClamp)) {
         if (std::isfinite(edited) && edited > 0.0f) {
             value = edited;
+            return true;
         } else {
             write_log(log, LogLevel::warning, "Canvas",
                       std::string(label) + " must be positive and finite");
         }
     }
+    return false;
 }
 
 namespace {
@@ -338,6 +342,7 @@ void render_graph_window(AppContext& app) {
     options.node_separation = settings.node_separation;
     options.compound = settings.compound;
     bool graph_changed = false;
+    bool focus_style_changed = false;
     const auto previous_options = options;
     const ImColor text_col = ImGui::GetStyle().Colors[ImGuiCol_Text];
     const ImColor line_col = ImGui::GetStyle().Colors[ImGuiCol_PlotLines];
@@ -366,6 +371,26 @@ void render_graph_window(AppContext& app) {
             ImGui::DragFloat("Rank Separation", &settings.rank_separation, 0.01f, 0.01f, 100.0f);
             ImGui::DragFloat("Node Separation", &settings.node_separation, 0.01f, 0.01f, 100.0f);
             ImGui::DragFloat("Arrow Size", &settings.arrow_size, 0.01f, 0.0f, 100.0f);
+            if (ImGui::BeginMenu("Focus style")) {
+                float color[] = {settings.focus_color[0], settings.focus_color[1],
+                                 settings.focus_color[2]};
+                if (ImGui::ColorEdit3("Focus color", color, ImGuiColorEditFlags_NoOptions)) {
+                    if (std::all_of(std::begin(color), std::end(color), [](float component) {
+                            return std::isfinite(component) && component >= 0.0f && component <= 1.0f;
+                        })) {
+                        std::copy(std::begin(color), std::end(color), settings.focus_color);
+                        focus_style_changed = true;
+                    } else {
+                        write_log(log, LogLevel::warning, "Canvas",
+                                  "Focus color components must be finite and between 0 and 1");
+                    }
+                }
+                focus_style_changed |= drag_positive_value(
+                    "Focus thickness", settings.focus_thickness, 0.05f, log);
+                focus_style_changed |= drag_positive_value(
+                    "Outgoing edge thickness", settings.secondary_focus_thickness, 0.05f, log);
+                ImGui::EndMenu();
+            }
             ImGui::Checkbox("Compound", &options.compound);
             if (ImGui::BeginMenu("Ratio")) {
                 if (ImGui::RadioButton("Default", settings.ratio_selection == UserSettings::RatioSelection::Default))
@@ -467,7 +492,7 @@ void render_graph_window(AppContext& app) {
     }
     if (graph_changed)
         settings.capture_graph(graph);
-    if (graph_changed || previous_scale != settings.canvas_scale ||
+    if (graph_changed || focus_style_changed || previous_scale != settings.canvas_scale ||
         previous_rank_separation != settings.rank_separation ||
         previous_node_separation != settings.node_separation ||
         previous_arrow_size != settings.arrow_size ||
@@ -516,7 +541,8 @@ void render_graph_window(AppContext& app) {
             std::find(focus->graph_indices.begin(), focus->graph_indices.end(),
                       graph_index) != focus->graph_indices.end();
     };
-    const ImColor focus_col(45, 220, 95, 255);
+    const ImColor focus_col(settings.focus_color[0], settings.focus_color[1],
+                            settings.focus_color[2], 1.0f);
 
     auto to_screen = [&](dot_layout::Point point) {
     return ImVec2( origin.x + (point.x - layout.bounds.min_x) * scale, 
@@ -540,7 +566,8 @@ void render_graph_window(AppContext& app) {
             include(to_screen(point));
         if (edge.arrow_tips[index])
             include(to_screen(*edge.arrow_tips[index]));
-        return visible_rect(min, max, settings.arrow_size + 4.0f);
+        return visible_rect(min, max, settings.arrow_size +
+            std::max({4.0f, settings.focus_thickness, settings.secondary_focus_thickness}));
     };
     auto spline_to_screen = [&](const std::vector<dot_layout::Point>& spline) {
         std::vector<ImVec2> result;
@@ -585,6 +612,13 @@ void render_graph_window(AppContext& app) {
             canvas.click_started = false;
         }
 
+        std::unordered_set<std::string_view> focused_nodes;
+        if (focus && focus->kind == GraphObjectKind::state) {
+            for (const auto index : focus->graph_indices)
+                if (index < graph.nodes.size())
+                    focused_nodes.insert(graph.nodes[index].id);
+        }
+
         for (std::size_t cluster_index = 0;
              cluster_index < layout.clusters.size(); ++cluster_index) {
             const auto& cluster = layout.clusters[cluster_index];
@@ -599,14 +633,14 @@ void render_graph_window(AppContext& app) {
                 focus_contains(GraphObjectKind::state_map, cluster_index);
                 
             draw_list->ChannelsSetCurrent(highlighted?focus_channel:0);
-            if (visible_rect(tl, br, 4.0f))
+            if (visible_rect(tl, br, std::max(4.0f, settings.focus_thickness)))
                 draw_list->AddRect(tl, br,
                                    highlighted ? focus_col : line_col,
-                                   12.0f, highlighted ? 3.0f : 1.0f);
-            if (visible_rect(outter.Min, outter.Max, 4.0f))
+                                   12.0f, highlighted ? settings.focus_thickness : 1.0f);
+            if (visible_rect(outter.Min, outter.Max, std::max(4.0f, settings.focus_thickness)))
                 draw_list->AddRect(outter.Min, outter.Max,
                                    highlighted ? focus_col : line_col,
-                                   12.0f, highlighted ? 3.0f : 1.0f);
+                                   12.0f, highlighted ? settings.focus_thickness : 1.0f);
             if (cluster.label) {
                 const ImVec2 center = to_screen(cluster.label->center);
                 const ImVec2 text_size = ImGui::CalcTextSize(cluster.label->text.c_str());
@@ -632,15 +666,15 @@ void render_graph_window(AppContext& app) {
             const bool highlighted = focus_contains(GraphObjectKind::state, i);
             
             draw_list->ChannelsSetCurrent(highlighted?focus_channel:2);
-            if (visible_rect(tl, br, 4.0f) && node.shape == dot_layout::NodeShape::Box) {
+            if (visible_rect(tl, br, std::max(4.0f, settings.focus_thickness)) && node.shape == dot_layout::NodeShape::Box) {
                 draw_list->AddRectFilled(tl, br, node_col, 12.0f);
                 if (highlighted)
-                    draw_list->AddRect(tl, br, focus_col, 12.0f, 3.0f);
-            } else if (visible_rect(tl, br, 4.0f)) {
+                    draw_list->AddRect(tl, br, focus_col, 12.0f, settings.focus_thickness);
+            } else if (visible_rect(tl, br, std::max(4.0f, settings.focus_thickness))) {
                 draw_list->AddEllipseFilled(ImVec2(x, y), ImVec2(width * 0.5f, height * 0.5f), node_col);
                 if (highlighted)
                     draw_list->AddEllipse(ImVec2(x, y),
-                        ImVec2(width * 0.5f, height * 0.5f), focus_col, 0, 0, 3.0f);
+                        ImVec2(width * 0.5f, height * 0.5f), focus_col, 0, 0, settings.focus_thickness);
             }
             if (node.shape != dot_layout::NodeShape::Point &&
                 visible_rect(label_pos, ImVec2(label_pos.x + label_size.x, label_pos.y + label_size.y), 4.0f))
@@ -654,9 +688,11 @@ void render_graph_window(AppContext& app) {
             const bool highlighted =
                 focus_contains(GraphObjectKind::transition, edge_index) ||
                 focus_contains(GraphObjectKind::guard, edge_index);
+            const bool outgoing = edge_index < graph.edges.size() &&
+                focused_nodes.contains(graph.edges[edge_index].from);
             const auto edge_color = highlighted ? focus_col : line_col;
 
-            draw_list->ChannelsSetCurrent(highlighted?focus_channel:1);
+            draw_list->ChannelsSetCurrent((highlighted || outgoing)?focus_channel:1);
             for (std::size_t i = 0; i < edge.spline_points.size(); ++i) {
                 if (!visible_spline(edge, i))
                     continue;
@@ -665,10 +701,12 @@ void render_graph_window(AppContext& app) {
                 if (edge.arrow_tips[i])
                     tip = to_screen(*edge.arrow_tips[i]);
                 draw_spline_with_arrow(draw_list, spl, tip, edge_color,
-                                       highlighted ? 3.0f : 1.0f, settings.arrow_size);
+                                       highlighted ? settings.focus_thickness :
+                                       outgoing ? settings.secondary_focus_thickness : 1.0f,
+                                       settings.arrow_size);
             }
 
-            draw_list->ChannelsSetCurrent(highlighted?focus_channel:2);
+            draw_list->ChannelsSetCurrent((highlighted || outgoing)?focus_channel:2);
             if (edge.label) {
                 const ImVec2 center = to_screen(edge.label->center);
                 const ImVec2 half_size(edge.label->width * scale * 0.5f,

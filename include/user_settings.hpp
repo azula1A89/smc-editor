@@ -61,6 +61,9 @@ public:
     float rank_separation = 4.0f;
     float node_separation = 1.0f;
     float arrow_size = 10.0f;
+    float focus_color[3] = {11.0f / 255.0f, 0.0f / 255.0f, 255.0f / 255.0f};
+    float focus_thickness = 3.0f;
+    float secondary_focus_thickness = 3.0f;
     dot_layout::RankDirection rank_direction = dot_layout::RankDirection::LeftToRight;
     bool compound = true;
     RatioSelection ratio_selection = RatioSelection::Default;

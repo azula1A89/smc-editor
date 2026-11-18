@@ -113,12 +113,16 @@ void UserSettings::read_line_func(
             settings.window_height = integer;
     } else if (key == "canvas_scale" || key == "rank_separation" ||
                key == "node_separation" || key == "arrow_size" ||
-               key == "ratio_value" || key == "size_width" || key == "size_height") {
+               key == "ratio_value" || key == "size_width" || key == "size_height" ||
+               key == "focus_red" || key == "focus_green" || key == "focus_blue" ||
+               key == "focus_thickness" || key == "secondary_focus_thickness") {
         valid = parse_float(value, floating);
         if (key == "canvas_scale")
             valid = valid && floating >= 0.2f && floating <= 3.0f;
         else if (key == "arrow_size")
             valid = valid && floating >= 0.0f && floating <= 100.0f;
+        else if (key == "focus_red" || key == "focus_green" || key == "focus_blue")
+            valid = valid && floating >= 0.0f && floating <= 1.0f;
         else
             valid = valid && floating > 0.0f && floating <= 100.0f;
         if (valid && key == "canvas_scale")
@@ -135,6 +139,16 @@ void UserSettings::read_line_func(
             settings.size_width = floating;
         else if (valid && key == "size_height")
             settings.size_height = floating;
+        else if (valid && key == "focus_red")
+            settings.focus_color[0] = floating;
+        else if (valid && key == "focus_green")
+            settings.focus_color[1] = floating;
+        else if (valid && key == "focus_blue")
+            settings.focus_color[2] = floating;
+        else if (valid && key == "focus_thickness")
+            settings.focus_thickness = floating;
+        else if (valid && key == "secondary_focus_thickness")
+            settings.secondary_focus_thickness = floating;
     } else if (key == "rank_direction") {
         valid = parse_integer(value, integer) &&
                 integer >= static_cast<int>(dot_layout::RankDirection::TopToBottom) &&
@@ -232,6 +246,11 @@ void UserSettings::write_all_func(
     buffer->appendf("rank_separation=%.6g\n", settings.rank_separation);
     buffer->appendf("node_separation=%.6g\n", settings.node_separation);
     buffer->appendf("arrow_size=%.6g\n", settings.arrow_size);
+    buffer->appendf("focus_red=%.9g\n", settings.focus_color[0]);
+    buffer->appendf("focus_green=%.9g\n", settings.focus_color[1]);
+    buffer->appendf("focus_blue=%.9g\n", settings.focus_color[2]);
+    buffer->appendf("focus_thickness=%.9g\n", settings.focus_thickness);
+    buffer->appendf("secondary_focus_thickness=%.9g\n", settings.secondary_focus_thickness);
     buffer->appendf("rank_direction=%d\n", static_cast<int>(settings.rank_direction));
     buffer->appendf("compound=%d\n", settings.compound ? 1 : 0);
     buffer->appendf("ratio_selection=%d\n", static_cast<int>(settings.ratio_selection));
