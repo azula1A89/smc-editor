@@ -99,7 +99,7 @@ void configure_fonts() {
     noto_sans_config.FontDataOwnedByAtlas = false;
     noto_sans_config.MergeMode = true;
     io.Fonts->AddFontFromMemoryCompressedTTF(
-        static_cast<const void*>(&notosans), notosansSize, 15.0f, &noto_sans_config);
+        static_cast<const void*>(&notosans), notosansSize, 20.0f, &noto_sans_config);
 }
 
 } // namespace
