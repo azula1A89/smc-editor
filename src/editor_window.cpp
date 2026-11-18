@@ -464,7 +464,7 @@ void render_editor_window(AppContext& app) {
 			if (ImGui::BeginMenu("Line Spacing")) {
 				if (ImGui::MenuItem("1.0", NULL, app.editor->GetLineSpacing() == 1.0f)) { app.editor->SetLineSpacing(1.0f); }
 				if (ImGui::MenuItem("1.25", NULL, app.editor->GetLineSpacing() == 1.25f)) { app.editor->SetLineSpacing(1.25f); }
-				if (ImGui::MenuItem("1.5", NULL, app.editor->GetLineSpacing() == 1.25f)) { app.editor->SetLineSpacing(1.5f); }
+				if (ImGui::MenuItem("1.5", NULL, app.editor->GetLineSpacing() == 1.5f)) { app.editor->SetLineSpacing(1.5f); }
 				if (ImGui::MenuItem("1.75", NULL, app.editor->GetLineSpacing() == 1.75f)) { app.editor->SetLineSpacing(1.75f); }
 				if (ImGui::MenuItem("2.0", NULL, app.editor->GetLineSpacing() == 2.0f)) { app.editor->SetLineSpacing(2.0f); }
 				ImGui::EndMenu();
