@@ -31,6 +31,7 @@ jobs:
             libcairo2-dev \
             libpango1.0-dev \
             libgl1-mesa-dev \
+            libglu1-mesa-dev \
             libx11-dev \
             libxcursor-dev \
             libxinerama-dev \
