@@ -46,6 +46,23 @@ If no file is specified, the application opens with its built-in example.
 
 See [Detail.md](Detail.md) for additional build notes, usage guidance, and technical details.
 
+## Third-party code
+
+The project fetches and uses the following third-party code:
+
+| Library | Version | License |
+| --- | --- | --- |
+| [Dear ImGui](https://github.com/ocornut/imgui) | v1.92.9b-docking | [MIT](https://github.com/ocornut/imgui/blob/v1.92.9b-docking/LICENSE.txt) |
+| [GLFW](https://github.com/glfw/glfw) | 3.5.1 | [zlib/libpng](https://github.com/glfw/glfw/blob/3.5.1/LICENSE.md) |
+| [GLEW](https://github.com/nigels-com/glew) | 2.3.1 | [BSD-style and additional notices](https://github.com/nigels-com/glew/blob/glew-2.3.1/LICENSE.txt) |
+| [FreeType](https://github.com/freetype/freetype) | 2.14.3 | [FTL or GPL-2.0-or-later](https://github.com/freetype/freetype/blob/VER-2-14-3/LICENSE.TXT) |
+| [Graphviz](https://gitlab.com/graphviz/graphviz) | 16.1.0 | [EPL-2.0](https://gitlab.com/graphviz/graphviz/-/blob/16.1.0/COPYING) |
+| [ImGuiFileSelector](https://github.com/goossens/ImGuiFileSelector) | v1.93.0 | [MIT](https://github.com/goossens/ImGuiFileSelector/blob/v1.93.0/LICENSE) |
+| [ImGuiColorTextEdit](https://github.com/goossens/ImGuiColorTextEdit) | v1.93.0 | [MIT](https://github.com/goossens/ImGuiColorTextEdit/blob/v1.93.0/LICENSE) |
+| [smc.cpp](https://github.com/azula1A89/smc.cpp) | commit `8e9b609` | [MIT](https://github.com/azula1A89/smc.cpp/blob/8e9b6096454881d205e159fe83b194f5bf1c35e0/LICENSE) |
+
+These are upstream projects with their own license terms; see each linked license for details. System-provided dependencies are not included in this list.
+
 ## License
 
 This project is distributed under the [MIT License](LICENSE).
