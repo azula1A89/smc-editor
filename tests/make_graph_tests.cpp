@@ -245,7 +245,7 @@ int main() {
         test_source_segment_parent_fallback();
         require(!make_graph(std::string(TEST_SOURCE_DIR) + "/tests/no-such-file.sm"),
                 "Missing file accepted");
-        require(!make_graph(std::string(TEST_SOURCE_DIR) + "/deps/smc.cpp/tests/invalid.sm"),
+        require(!make_graph(std::string(TEST_SOURCE_DIR) + "/tests/invalid_fsm.sm"),
                 "Invalid FSM accepted");
     } catch (const std::exception& error) {
         std::cerr << "make_graph_tests: " << error.what() << '\n';

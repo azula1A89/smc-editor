@@ -1,6 +1,0 @@
-# Ignore generated jar files ...
-*.jar
-smc-git-code
-build
-.cache
-books

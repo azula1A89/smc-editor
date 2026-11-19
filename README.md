@@ -6,7 +6,7 @@ Graphviz 上游使用 Autotools，不是 CMake 子项目。CMake 通过 FetchCon
 
 ## 依赖
 
-- CMake 3.24+、C/C++ 编译器、GNU Make
+- CMake 3.24+、C/C++ 编译器、GNU Make、Git
 - Graphviz 构建依赖，包含 `pangocairo`、`pangoft2`、Expat 和 zlib 的开发文件
 - `pkg-config`、Python 3、Flex、Bison
 
@@ -29,12 +29,13 @@ ctest --test-dir build -R '^(log_tests|dot_layout_tests|render_graph_tests|make_
 ```
 
 Graphviz 源码包会自动获取到构建目录中的 `_deps/graphviz-src/`；配置文件、对象文件和静态归档放在 `build/deps/graphviz/graphviz-build/`。
+SMC 编译器通过 FetchContent 从 [smc.cpp](https://github.com/azula1A89/smc.cpp) 获取固定提交，源码位于 `build/_deps/smc_cpp-src/`。
 `dot_layout_tests`、`render_graph_tests`、`make_graph_tests` 和 `performance_pipeline_tests` 不需要图形界面；另有 `dot_layout_demo_runs` 测试会启动交互窗口，需手动关闭。
 
 可使用以下命令测量指定输入的分析 CPU 时间，以及无图形界面时缓存帧和每帧强制重新布局的平均 CPU 时间：
 
 ```sh
-./build/performance_pipeline_tests --benchmark deps/smc.cpp/SmcParser.sm
+./build/performance_pipeline_tests --benchmark build/_deps/smc_cpp-src/examples/SMC/SmcParser.sm
 ```
 
 强制重新布局用于对比布局缓存，并不是完整旧版本的端到端基准；结果受构建类型和运行环境影响。
