@@ -4,6 +4,10 @@
 
 `smc-editor` is a desktop editor for SMC state-machine definitions. Edit `.sm` files, explore their state diagrams, review diagnostics, and generate C++ source files from your work.
 
+
+https://github.com/user-attachments/assets/5cfe3e06-39d9-4964-97de-bfec31b2acde
+
+
 ## Features
 
 - Edit SMC files with syntax-aware highlighting and diagnostics.
