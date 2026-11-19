@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(graphviz_dot_layout_demo LANGUAGES C CXX)
+project(smc-editor LANGUAGES C CXX)
 
 include(CTest)
 find_package(Threads REQUIRED)
@@ -36,11 +36,11 @@ add_library(app_ui STATIC
 target_include_directories(app_ui PUBLIC include)
 target_link_libraries(app_ui PUBLIC app_log dot_layout imgui imgui_file_selector glew_s smc_core Threads::Threads)
 
-add_executable(dot_layout_demo src/main.cpp src/application.cpp)
-target_link_libraries(dot_layout_demo PRIVATE app_ui)
+add_executable(smc-editor src/main.cpp src/application.cpp)
+target_link_libraries(smc-editor PRIVATE app_ui)
 
 if(BUILD_TESTING)
-  add_test(NAME dot_layout_demo_runs COMMAND dot_layout_demo)
+  add_test(NAME smc_editor_runs COMMAND smc-editor)
   add_executable(log_tests tests/log_tests.cpp)
   target_link_libraries(log_tests PRIVATE app_log)
   add_test(NAME log_tests COMMAND log_tests)
