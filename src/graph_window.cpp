@@ -314,6 +314,9 @@ void render_graph_window(AppContext& app) {
     ImGui::Begin("canvas", NULL, ImGuiWindowFlags_MenuBar);
     const int channel_count = 4;
     const int focus_channel = channel_count - 1;
+    const int cluster_channel = 0;
+    const int edge_channel = 1;
+    const int node_channel = 2;
     ImDrawList *draw_list = ImGui::GetWindowDrawList();
     draw_list->ChannelsSplit(channel_count);
     ImGuiStyle &style = ImGui::GetStyle();
@@ -632,7 +635,7 @@ void render_graph_window(AppContext& app) {
             const bool highlighted =
                 focus_contains(GraphObjectKind::state_map, cluster_index);
                 
-            draw_list->ChannelsSetCurrent(highlighted?focus_channel:0);
+            draw_list->ChannelsSetCurrent(highlighted?focus_channel:cluster_channel);
             if (visible_rect(tl, br, std::max(4.0f, settings.focus_thickness)))
                 draw_list->AddRect(tl, br,
                                    highlighted ? focus_col : line_col,
@@ -665,7 +668,7 @@ void render_graph_window(AppContext& app) {
             const ImVec2 br(x + width * 0.5f, y + height * 0.5f);
             const bool highlighted = focus_contains(GraphObjectKind::state, i);
             
-            draw_list->ChannelsSetCurrent(highlighted?focus_channel:2);
+            draw_list->ChannelsSetCurrent(highlighted?focus_channel:node_channel);
             if (visible_rect(tl, br, std::max(4.0f, settings.focus_thickness)) && node.shape == dot_layout::NodeShape::Box) {
                 draw_list->AddRectFilled(tl, br, node_col, 12.0f);
                 if (highlighted)
@@ -692,7 +695,7 @@ void render_graph_window(AppContext& app) {
                 focused_nodes.contains(graph.edges[edge_index].from);
             const auto edge_color = highlighted ? focus_col : line_col;
 
-            draw_list->ChannelsSetCurrent((highlighted || outgoing)?focus_channel:1);
+            draw_list->ChannelsSetCurrent((highlighted || outgoing)?focus_channel:edge_channel);
             for (std::size_t i = 0; i < edge.spline_points.size(); ++i) {
                 if (!visible_spline(edge, i))
                     continue;
@@ -706,7 +709,6 @@ void render_graph_window(AppContext& app) {
                                        settings.arrow_size);
             }
 
-            draw_list->ChannelsSetCurrent((highlighted || outgoing)?focus_channel:2);
             if (edge.label) {
                 const ImVec2 center = to_screen(edge.label->center);
                 const ImVec2 half_size(edge.label->width * scale * 0.5f,
