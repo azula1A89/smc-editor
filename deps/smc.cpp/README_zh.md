@@ -22,21 +22,21 @@ ctest --test-dir build --output-on-failure
 校验状态机文件，但不生成代码：
 
 ```sh
-./build/smc_cpp -c++ --check SmcLexer.sm
+./build/smc_cpp -c++ --check examples/SMC/SmcLexer.sm
 ```
 
 在输入文件旁生成头文件和源文件（`SmcLexer.hpp` 和 `SmcLexer.cpp`）：
 
 ```sh
-./build/smc_cpp -c++ SmcLexer.sm
+./build/smc_cpp -c++ examples/SMC/SmcLexer.sm
 ```
 
 使用 `-d` 指定其他输出目录。已有文件会被覆盖。即使指定了 `-d`，`--check` 也只校验
 输入，不会写入生成文件：
 
 ```sh
-./build/smc_cpp -c++ -d generated SmcLexer.sm
-./build/smc_cpp -c++ --check -d generated SmcLexer.sm
+./build/smc_cpp -c++ -d generated examples/SMC/SmcLexer.sm
+./build/smc_cpp -c++ --check -d generated examples/SMC/SmcLexer.sm
 ```
 
 ## C++ 生成器 API

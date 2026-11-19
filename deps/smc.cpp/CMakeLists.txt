@@ -47,9 +47,9 @@ if(BUILD_TESTING)
     add_test(NAME smc_cli_invalid
              COMMAND smc_cpp -c++ --check ${CMAKE_CURRENT_SOURCE_DIR}/tests/invalid.sm)
     add_test(NAME smc_cli_lexer_grammar
-             COMMAND smc_cpp -c++ --check ${CMAKE_CURRENT_SOURCE_DIR}/SmcLexer.sm)
+             COMMAND smc_cpp -c++ --check ${CMAKE_CURRENT_SOURCE_DIR}/examples/SMC/SmcLexer.sm)
     add_test(NAME smc_cli_parser_grammar
-             COMMAND smc_cpp -c++ --check ${CMAKE_CURRENT_SOURCE_DIR}/SmcParser.sm)
+             COMMAND smc_cpp -c++ --check ${CMAKE_CURRENT_SOURCE_DIR}/examples/SMC/SmcParser.sm)
     add_test(NAME smc_cli_generate
              COMMAND ${CMAKE_COMMAND}
                      "-DSMC_EXECUTABLE=$<TARGET_FILE:smc_cpp>"

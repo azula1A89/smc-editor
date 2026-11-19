@@ -26,14 +26,14 @@ ctest --test-dir build --output-on-failure
 Validate a state-machine file without generating code:
 
 ```sh
-./build/smc_cpp -c++ --check SmcLexer.sm
+./build/smc_cpp -c++ --check examples/SMC/SmcLexer.sm
 ```
 
 Generate a header and source file next to the input (`SmcLexer.hpp` and
 `SmcLexer.cpp`):
 
 ```sh
-./build/smc_cpp -c++ SmcLexer.sm
+./build/smc_cpp -c++ examples/SMC/SmcLexer.sm
 ```
 
 Use `-d` to select another output directory. Existing files are overwritten.
@@ -41,8 +41,8 @@ Use `-d` to select another output directory. Existing files are overwritten.
 when `-d` is specified:
 
 ```sh
-./build/smc_cpp -c++ -d generated SmcLexer.sm
-./build/smc_cpp -c++ --check -d generated SmcLexer.sm
+./build/smc_cpp -c++ -d generated examples/SMC/SmcLexer.sm
+./build/smc_cpp -c++ --check -d generated examples/SMC/SmcLexer.sm
 ```
 
 ## C++ generator API
