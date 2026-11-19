@@ -314,10 +314,12 @@ void testInvalidSettingsAreLogged() {
                     records[0].source == "Settings" &&
                     records[0].detail.find("window_width") != std::string::npos,
                 "Invalid settings were not logged");
-        require(settings.focus_color[0] == 45.0f / 255.0f &&
-                    settings.focus_color[1] == 220.0f / 255.0f &&
-                    settings.focus_thickness == 3.0f &&
-                    settings.secondary_focus_thickness == 3.0f,
+        const UserSettings defaults;
+        require(settings.focus_color[0] == defaults.focus_color[0] &&
+                    settings.focus_color[1] == defaults.focus_color[1] &&
+                    settings.focus_color[2] == defaults.focus_color[2] &&
+                    settings.focus_thickness == defaults.focus_thickness &&
+                    settings.secondary_focus_thickness == defaults.secondary_focus_thickness,
                 "Invalid focus style settings replaced defaults");
     }
     std::filesystem::remove(path);

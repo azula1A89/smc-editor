@@ -593,7 +593,10 @@ int main() {
         require(canvasGeometry() == fsm_canvas, "FSM graph did not persist across frames");
         const GraphFocus focused_state{GraphObjectKind::state, {0}};
         frame(800, 500, std::nullopt, fsm_graph, focused_state);
-        const ImU32 focus_color = IM_COL32(45, 220, 95, 255);
+        const auto& configured_focus = test_app().settings;
+        const ImU32 focus_color = ImColor(
+            configured_focus.focus_color[0], configured_focus.focus_color[1],
+            configured_focus.focus_color[2], 1.0f);
         require(hasVertexColor(focus_color), "Focused graph object is not highlighted");
         ImGuiWindow* canvas = ImGui::FindWindowByName("canvas");
         const ImVec2 content_center = canvas->ContentRegionRect.GetCenter();
