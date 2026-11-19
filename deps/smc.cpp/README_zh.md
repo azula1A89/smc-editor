@@ -73,3 +73,9 @@ fsm.accept(source_generator);
 `SMC_USES_IOSTREAMS`，并且不要定义 `SMC_NO_EXCEPTIONS` 或 `SMC_FIXED_STACK`。若生成的头文件
 首先包含运行时，它会自行配置 iostream。Java 生成器的部分可选标志（例如 CRTP 和序列化）
 尚未实现。
+
+## 许可
+
+本项目原创代码采用 [MIT 许可证](LICENSE)。从原版 SMC 项目复制的部分文件保留其自身的
+许可证和版权声明，包括采用 MPL-1.1 许可证的运行时头文件和语法示例；这些文件不适用 MIT
+许可证。

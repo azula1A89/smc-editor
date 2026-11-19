@@ -85,3 +85,10 @@ configuration; define `SMC_USES_IOSTREAMS` before any earlier inclusion of
 The generated header configures iostreams when it includes the runtime first.
 Optional Java-generator flags such as CRTP and serialization are not
 implemented.
+
+## License
+
+This project's original code is licensed under the [MIT License](LICENSE).
+Some files copied from the original SMC project retain their own license and
+copyright notices, including the MPL-1.1-licensed runtime headers and grammar
+examples; those files are not relicensed under MIT.
