@@ -1,51 +1,61 @@
-# SoulsNpc：SMC C++ 交互示例
+# SoulsNpc: SMC C++ Interactive Example
 
-本示例展示用 `smc_cpp` 从 [SoulsNpc.sm](SoulsNpc.sm) 生成 C++ 状态机，再由
-`SoulsNpc` owner 提供动作、guard 条件和交互事件。它是确定性的命令行模拟，
-不会实现实时战斗、计时器或游戏画面。动作只打印效果，不会自动发送事件或
-修改 guard 条件。
+This example uses `smc_cpp` to generate a C++ state machine from
+[SoulsNpc.sm](SoulsNpc.sm). The `SoulsNpc` owner provides actions, guard
+conditions, and interactive events. It is a deterministic command-line
+simulation; it does not implement real-time combat, timers, or graphics.
+Actions only print their effects and do not send events or change guard
+conditions automatically.
 
-## 构建、生成与测试
+## Build, generate, and test
 
-需要 CMake 3.20 和 C++20 编译器。在本目录运行：
+A CMake 3.20 installation and a C++20 compiler are required. Run these
+commands from this directory:
 
 ```sh
-# 独立构建生成器，不启用生成器自己的测试。
+# Build the generator without enabling its own tests.
 cmake -S ../.. -B build/smc -DBUILD_TESTING=OFF
 cmake --build build/smc --target smc_cpp
 
-# 仅校验状态机；不会写文件。
+# Validate the state machine without writing generated files.
 ./build/smc/smc_cpp -c++ --check SoulsNpc.sm
 
-# 构建示例：配置阶段传入生成器的绝对路径。
+# Build the example, passing the generator's absolute path at configure time.
 cmake -S . -B build/demo -DSMC_EXECUTABLE="$(pwd)/build/smc/smc_cpp"
 cmake --build build/demo
 ctest --test-dir build/demo --output-on-failure
 ./build/demo/souls_npc
 ```
 
-示例构建调用 `smc_cpp -c++ -d build/demo SoulsNpc.sm`，生成
-`build/demo/SoulsNpc.hpp` 和 `build/demo/SoulsNpc.cpp`；构建还需要
-`../../include/headers/c++` 中的 runtime。`.sm` 或生成器可执行文件变化时，
-构建会重新生成。生成文件不是手写源文件，也不应提交。
+The example build invokes `smc_cpp -c++ -d build/demo SoulsNpc.sm` to generate
+`build/demo/SoulsNpc.hpp` and `build/demo/SoulsNpc.cpp`. It also requires the
+runtime in `../../include/headers/c++`. The files are regenerated when the
+`.sm` file or generator executable changes. Generated files are not hand-written
+sources and should not be committed.
 
-`SoulsNpc.h` 包含生成的头并持有 `SoulsNpcContext`；`npc.cpp` 实现 `.sm`
-中使用的 owner 动作及 guard 查询。`main.cpp` 调用 `enterStartState()` 执行
-初始 Entry，然后向生成的 context 发送事件。状态变化及动作均显示在终端。
+`SoulsNpc.h` includes the generated header and owns a `SoulsNpcContext`;
+`npc.cpp` implements the owner actions and guard queries used by the `.sm`
+file. `main.cpp` calls `enterStartState()` to run the initial entry action,
+then sends events to the generated context. State changes and actions are
+printed to the terminal.
 
-## 操作
+## Usage
 
-- `help` 列出命令和所有事件；`status` 显示当前状态、状态栈深度和 guard。
-- `event <事件名>` 发送事件，例如 `event ThinkTimer`；`Sensed` 需带参数，
-  如 `event Sensed true`。当前 `.sm` 保留该参数作为签名示例，暂不使用其值。
-- `set <boss|token|lowhp|far> <true|false>` 设置 guard。默认均为 `false`；
-  `lowhp` 和 `far` 只是条件开关，不是生命值或距离模拟。即使动作输出
-  “release token”或“heal”，开关也不会被自动修改。
-- `quit` 或输入结束（EOF）退出。命令和事件区分大小写。无效输入或当前状态
-  未定义的事件会报告错误，进程继续运行；`nil` 转换及 Dead 的 Default
-  是状态机有意忽略事件，不属于错误。
+- `help` lists commands and events. `status` shows the current state, state
+  stack depth, and guards.
+- `event <name>` sends an event, for example `event ThinkTimer`. `Sensed`
+  requires an argument, such as `event Sensed true`. The `.sm` file keeps this
+  parameter as a signature example; its value is not currently used.
+- `set <boss|token|lowhp|far> <true|false>` sets a guard. All guards default to
+  `false`. `lowhp` and `far` are switches, not simulations of health or
+  distance. Actions that print “release token” or “heal” do not update these
+  switches automatically.
+- `quit` or end-of-file (EOF) exits. Commands and events are case-sensitive.
+  Invalid input or an event undefined in the current state reports an error
+  and the process continues. `nil` transitions and the `Dead` state's default
+  transition intentionally ignore events and are not errors.
 
-例如，依次输入：
+For example, enter these commands in order:
 
 ```text
 event Sensed true
@@ -61,9 +71,11 @@ event BeyondLeash
 event AtSpawn
 ```
 
-这条路径从 Idle 进入 Chase，push 到 `CombatMap::Strafe`（栈深度 1），经
-Windup、Strike、Recovery 回到 Strafe，再 pop 到 Returning（栈深度 0）并
-回到 Idle。可在 `ThinkTimer` 之前再执行 `set lowhp true`，使 `MovePicked`
-走 Retreat；也可保持 `token false` 并设置 `far true` 来进入 GapCloser。
-在 Strafe 中设置 `boss true` 后发送 `HpBelowPhaseThreshold` 可演示 pop
-后进入阶段切换；`HpZero` 和 `Stagger` 也能演示 combat 到主状态机的 pop。
+This path moves from `Idle` to `Chase`, pushes `CombatMap::Strafe` (stack
+depth 1), proceeds through `Windup`, `Strike`, and `Recovery`, returns to
+`Strafe`, then pops to `Returning` (stack depth 0) and returns to `Idle`. To
+exercise `Retreat`, run `set lowhp true` before `ThinkTimer`. To enter
+`GapCloser`, leave `token` false and set `far` to true. In `Strafe`, set
+`boss` to true and send `HpBelowPhaseThreshold` to demonstrate a pop followed
+by a phase transition. `HpZero` and `Stagger` also demonstrate popping from
+the combat sub-machine to the main state machine.

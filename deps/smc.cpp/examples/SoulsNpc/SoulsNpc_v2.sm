@@ -1,6 +1,6 @@
 // ============================================================================
-// 类魂游戏 NPC 状态机 (SMC - State Machine Compiler 格式)
-// 对应原图: digraph SoulsNPC
+// Souls-like game NPC state machine in SMC format
+// Corresponding graph: digraph SoulsNPC
 // ============================================================================
 
 %class SoulsNPC
@@ -8,12 +8,12 @@
 %start MainMap::Idle
 
 // ----------------------------------------------------------------------------
-// 1. 宏观状态图 (MainMap)
+// 1. High-level state map (MainMap)
 // ----------------------------------------------------------------------------
 %map MainMap
 %%
 
-// 闲置 / 巡逻状态
+// Idle / patrol
 Idle
 {
     SeeTarget                       Alert           { investigateSource(); }
@@ -21,50 +21,50 @@ Idle
     Damaged                         Alert           { investigateSource(); }
 }
 
-// 警戒 / 调查状态
+// Alert / investigate
 Alert
 {
     TargetConfirmed                 Chase           {}
     Timeout                         Idle            {}
-    Damaged                         Chase           {} // 补充常见逻辑：警戒中受击直接进入追击
+    Damaged                         Chase           {} // Damage while alerting starts a chase
 }
 
-// 追击状态
+// Chase
 Chase
 {
-    // 距离进入攻击范围 -> 压入/进入战斗子状态机 (默认进入 Strafe)
+    // Enter the combat sub-machine when in range (starts in Strafe)
     UpdateDistance [ctxt.dist < ctxt.attackRange]
                                     CombatMap::Strafe {}
 
-    // 目标丢失过久 或 超出仇恨范围 (Leash)
+    // Target lost for too long or beyond the leash range
     TargetLostTimeout               Return          { resetAggro(); heal(); }
     UpdateDistance [ctxt.isBeyondLeash()]
                                     Return          { resetAggro(); heal(); }
 
-    // 死亡判定
+    // Death check
     TakeDamage [ctxt.hp <= 0]       Dead            { dropSouls(); }
 }
 
-// 返回 / 重置状态
+// Return / reset
 Return
 {
     AtSpawn                         Idle            {}
 }
 
-// 韧性崩溃 / 处决窗口 (硬直状态)
+// Poise break / riposte window (stagger state)
 Stagger
 Entry { openRiposteWindow(); }
 Exit  { closeRiposteWindow(); }
 {
-    // 处决致死 或 血量归零
+    // Riposte kill or zero health
     RiposteKill                     Dead            { dropSouls(); }
     TakeDamage [ctxt.hp <= 0]       Dead            { dropSouls(); }
 
-    // 硬直恢复 -> 回到战斗走位
+    // Recover from stagger and return to combat movement
     Recovered                       CombatMap::Strafe {}
 }
 
-// Boss 阶段转换状态 (无敌演出)
+// Boss phase transition (invulnerability during the transition)
 Phase
 Entry { setInvulnerable(true); loadNewMoveSet(); }
 Exit  { setInvulnerable(false); }
@@ -72,74 +72,75 @@ Exit  { setInvulnerable(false); }
     NewMoveSetReady                 CombatMap::Select {}
 }
 
-// 死亡终态
+// Terminal death state
 Dead
 {
-    // 终态不响应任何外部事件
+    // The terminal state ignores all external events
     Default                         nil             {}
 }
 
-// 全局默认转换 (处理从 CombatMap 跳出的通用宏观事件，如脱战、破韧、转阶段、死亡)
+// Global defaults for events bubbling up from CombatMap, such as disengage,
+// poise break, phase transition, and death
 Default
 {
-    // 超出仇恨范围强制脱战
+    // Force disengagement when beyond leash range
     BeyondLeash                     Return          { resetAggro(); heal(); }
 
-    // 韧性归零强制进入处决硬直
+    // Enter the riposte window when poise reaches zero
     PoiseBroken                     Stagger         {}
 
-    // Boss 血量低于 50% 触发转阶段
+    // Start the next phase when the Boss falls below 50% health
     CheckPhase [ctxt.isBoss() && ctxt.hp < ctxt.maxHp * 0.5]
                                     Phase           {}
 
-    // 任何状态下血量归零直接死亡
+    // Die when health reaches zero in any state
     Killed [ctxt.hp <= 0]           Dead            { dropSouls(); }
 }
 
 %%
 
 // ----------------------------------------------------------------------------
-// 2. 微观战斗子状态图 (CombatMap - 对应原图 subgraph cluster_combat)
+// 2. Combat sub-machine (CombatMap; corresponding graph subgraph cluster_combat)
 // ----------------------------------------------------------------------------
 %map CombatMap
 %%
 
-// 环绕 / 走位状态
+// Strafing / movement
 Strafe
 {
-    // 思考计时器到期 -> 选择招式
+    // Select a move when the think timer expires
     ThinkTimerExpired               Select          {}
 
-    // 目标拉远，超出战斗保持范围 -> 切回宏观追击
+    // Return to the high-level chase state when the target moves out of range
     UpdateDistance [ctxt.dist > ctxt.range]
                                     MainMap::Chase  {}
 
-    // 走位期间破韧或被弹反
+    // Poise break or parry while moving
     PoiseBroken                     MainMap::Stagger {}
     Parried                         MainMap::Stagger {}
 }
 
-// 招式选择器 (根据距离、权重、冷却决策)
+// Move selector (chooses based on distance, weight, and cooldown)
 Select
 {
-    // 目标太远 -> 拉近距离
+    // Close the distance when the target is too far away
     EvaluateMove [ctxt.isTargetTooFar()]
                                     Gap             {}
 
-    // 玩家正在攻击 -> 防御/准备弹反
+    // Block or prepare to parry while the player is attacking
     EvaluateMove [ctxt.isPlayerAttacking()]
                                     Block           {}
 
-    // 自身低血量或受压制 -> 后撤/闪避
+    // Retreat or dodge at low health or under pressure
     EvaluateMove [ctxt.isLowHp() || ctxt.isPressured()]
                                     Retreat         {}
 
-    // 选定招式且获得攻击令牌 (Token) -> 进入前摇
+    // Begin the windup after selecting a move and acquiring an attack token
     MoveChosen [ctxt.hasAttackToken()]
                                     Windup          { consumeToken(); }
 }
 
-// 攻击前摇 (蓄力提示期，可打断)
+// Attack windup (telegraph period; interruptible)
 Windup
 Entry { startTelegraph(); setInterruptible(true); }
 Exit  { setInterruptible(false); }
@@ -148,7 +149,7 @@ Exit  { setInterruptible(false); }
     PoiseBroken                     MainMap::Stagger {}
 }
 
-// 攻击判定 (激活打击框)
+// Attack strike (activate hit frames)
 Strike
 Entry { enableHitFrames(); }
 Exit  { disableHitFrames(); }
@@ -157,7 +158,7 @@ Exit  { disableHitFrames(); }
     TakeDamage [ctxt.hp <= 0]       MainMap::Dead   { dropSouls(); }
 }
 
-// 攻击后摇 (玩家惩罚窗口)
+// Recovery (player punish window)
 Recover
 Entry { openPunishWindow(); }
 Exit  { closePunishWindow(); }
@@ -166,26 +167,26 @@ Exit  { closePunishWindow(); }
     PoiseBroken                     MainMap::Stagger {}
 }
 
-// 防御 / 可弹反状态
+// Blocking / parryable state
 Block
 {
     ThreatGone                      Strafe          {}
     Parried                         MainMap::Stagger {}
 }
 
-// 后撤 / 闪避状态
+// Retreat / dodge state
 Retreat
 {
     DistanceRegained                Strafe          {}
 }
 
-// 突进 / 远程拉近状态 (Gap-closer / Ranged)
+// Gap closer / ranged approach
 Gap
 {
     InRange                         Strafe          {}
 }
 
-// 战斗子状态机的全局兜底规则 (继承自 MainMap::Default 的逻辑)
+// Global fallback rules for the combat sub-machine, inherited from MainMap::Default
 Default
 {
     BeyondLeash                     MainMap::Return { resetAggro(); heal(); }

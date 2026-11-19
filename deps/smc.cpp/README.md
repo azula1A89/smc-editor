@@ -1,8 +1,15 @@
-# SMC C++20 implementation
+# SMC C++20 Clone
 
-This repository contains an in-progress C++20 implementation of the core SMC
-workflow. The lexer handles SMC directives, comments, source blocks, and
-structural tokens; the parser builds an FSM model with maps, states,
+[English](README.md) | [简体中文](README_zh.md)
+
+This project is an independent clone of [SMC (State Machine Compiler)](https://smc.sourceforge.net/).
+The original SMC is implemented in Java; this project reimplements its main
+functionality in C++20. It is not a complete port: currently, only C++ code
+generation is supported.
+
+The in-progress implementation includes an SMC lexer, parser, syntax checker,
+and C++ generator. The lexer handles SMC directives, comments, source blocks,
+and structural tokens; the parser builds an FSM model with maps, states,
 transitions, guards, and opaque embedded C++ action/parameter text. The syntax
 checker validates required C++ declarations, start-state references,
 transition destinations, duplicate declarations/guards, and restrictions on
