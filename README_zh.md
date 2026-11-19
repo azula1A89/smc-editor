@@ -4,6 +4,8 @@
 
 `smc-editor` 是一款用于编辑 SMC 状态机定义的桌面应用。你可以编辑 `.sm` 文件、查看状态图、检查诊断信息，并从状态机定义生成 C++ 源文件。
 
+https://github.com/user-attachments/assets/5cfe3e06-39d9-4964-97de-bfec31b2acde
+
 ## 功能
 
 - 编辑 SMC 文件，提供语法高亮和诊断信息。
