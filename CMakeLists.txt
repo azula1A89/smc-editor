@@ -9,6 +9,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Keep CMake dependencies in deps/ static even when reusing a shared build cache.
+set(BUILD_SHARED_LIBS OFF)
+
 add_subdirectory(deps)
 
 add_library(dot_layout STATIC

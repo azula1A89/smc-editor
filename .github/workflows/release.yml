@@ -45,6 +45,13 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
           cmake --build build
 
+      - name: Verify bundled dependencies are statically linked
+        run: |
+          if ldd build/smc-editor | grep -E '=> .*/build/(_deps|deps)/'; then
+            echo "smc-editor dynamically links a dependency built from deps/." >&2
+            exit 1
+          fi
+
       - name: Package executable
         run: tar -czf smc-editor-linux-x86_64.tar.gz -C build smc-editor
 

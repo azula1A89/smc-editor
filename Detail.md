@@ -2,7 +2,7 @@
 
 `smc-editor` 是一款用于编辑 SMC 状态机定义的桌面应用。本页介绍构建说明、使用行为，以及应用所用 Graphviz 布局包装层的实现细节。
 
-Graphviz 上游使用 Autotools，不是 CMake 子项目。CMake 通过 FetchContent 下载 Graphviz 16.1.0 发布源码包，再由 `ExternalProject` 在独立构建目录运行 Graphviz 的 `configure` 和 `make`，最后将 `libgvc`、`dot_layout` 插件和 Pango 文本布局插件的静态归档链接到示例。这里的“静态链接”指 Graphviz 代码使用 `.a` 归档；系统的 Pango、Expat、zlib 等依赖仍由系统提供，不承诺生成完全静态的操作系统可执行文件。
+Graphviz 上游使用 Autotools，不是 CMake 子项目。CMake 通过 FetchContent 下载 Graphviz 16.1.0 发布源码包，再由 `ExternalProject` 在独立构建目录运行 Graphviz 的 `configure` 和 `make`，最后将 `libgvc`、`dot_layout` 插件和 Pango 文本布局插件的静态归档链接到示例。项目也会关闭 `BUILD_SHARED_LIBS`，以静态方式链接 `deps/` 中由 CMake 构建的依赖库。系统提供的 Pango、Cairo、Expat、zlib、OpenGL 和窗口系统库仍是动态运行时依赖；这不承诺生成完全静态的操作系统可执行文件。
 
 ## 依赖
 
