@@ -35,7 +35,9 @@ jobs:
             libxcursor-dev \
             libxinerama-dev \
             libxrandr-dev \
-            libxi-dev
+            libxi-dev \
+            libwayland-dev \
+            libxkbcommon-dev
 
       - name: Configure and build
         run: |
