@@ -9,6 +9,12 @@ if(WIN32)
     set(PKG_CONFIG_EXECUTABLE "${_pkg_config_executable}"
       CACHE FILEPATH "pkg-config executable" FORCE)
   endif()
+  if(SMC_EDITOR_USE_RELEASE_PKGCONFIG)
+    set(_vcpkg_release_pkgconfig_dir
+      "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib/pkgconfig")
+    set(ENV{PKG_CONFIG_PATH} "${_vcpkg_release_pkgconfig_dir}")
+    set(ENV{PKG_CONFIG_LIBDIR} "${_vcpkg_release_pkgconfig_dir}")
+  endif()
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(PANGOCAIRO REQUIRED IMPORTED_TARGET pangocairo pangoft2)
 

@@ -76,6 +76,7 @@ jobs:
         run: |
           cmake -S . -B build -DBUILD_TESTING=OFF `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DSMC_EDITOR_USE_RELEASE_PKGCONFIG=ON `
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
           cmake --build build --config Release
 
