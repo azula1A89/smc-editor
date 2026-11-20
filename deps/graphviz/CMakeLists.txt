@@ -1,3 +1,80 @@
+if(WIN32)
+  find_package(graphviz CONFIG REQUIRED)
+  find_package(ZLIB REQUIRED)
+  if(NOT PKG_CONFIG_EXECUTABLE)
+    file(GLOB _pkg_config_candidates
+      "${_VCPKG_INSTALLED_DIR}/*/tools/pkgconf/pkgconf.exe"
+    )
+    list(GET _pkg_config_candidates 0 _pkg_config_executable)
+    set(PKG_CONFIG_EXECUTABLE "${_pkg_config_executable}"
+      CACHE FILEPATH "pkg-config executable" FORCE)
+  endif()
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(PANGOCAIRO REQUIRED IMPORTED_TARGET pangocairo pangoft2)
+
+  function(add_graphviz_static_import target library_name)
+    find_library("${target}_DEBUG"
+      NAMES "${library_name}"
+      PATHS "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib"
+      NO_DEFAULT_PATH
+      REQUIRED
+    )
+    find_library("${target}_RELEASE"
+      NAMES "${library_name}"
+      PATHS "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib"
+      NO_DEFAULT_PATH
+      REQUIRED
+    )
+    add_library("${target}" STATIC IMPORTED GLOBAL)
+    set_target_properties("${target}" PROPERTIES
+      IMPORTED_LOCATION_DEBUG "${${target}_DEBUG}"
+      IMPORTED_LOCATION_RELEASE "${${target}_RELEASE}"
+      IMPORTED_LOCATION_MINSIZEREL "${${target}_RELEASE}"
+      IMPORTED_LOCATION_RELWITHDEBINFO "${${target}_RELEASE}"
+    )
+  endfunction()
+
+  add_graphviz_static_import(graphviz_plugin_dot_layout gvplugin_dot_layout)
+  add_graphviz_static_import(graphviz_plugin_pango gvplugin_pango)
+  add_graphviz_static_import(graphviz_dotgen dotgen)
+
+  set(GRAPHVIZ_COMPAT_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/include")
+  file(MAKE_DIRECTORY
+    "${GRAPHVIZ_COMPAT_INCLUDE_DIR}/cgraph"
+    "${GRAPHVIZ_COMPAT_INCLUDE_DIR}/common"
+    "${GRAPHVIZ_COMPAT_INCLUDE_DIR}/gvc"
+  )
+  file(WRITE "${GRAPHVIZ_COMPAT_INCLUDE_DIR}/cgraph/cgraph.h"
+    "#include <graphviz/cgraph.h>\n")
+  file(WRITE "${GRAPHVIZ_COMPAT_INCLUDE_DIR}/common/types.h"
+    "#include <graphviz/types.h>\n")
+  file(WRITE "${GRAPHVIZ_COMPAT_INCLUDE_DIR}/gvc/gvc.h"
+    "#include <graphviz/gvc.h>\n")
+  file(WRITE "${GRAPHVIZ_COMPAT_INCLUDE_DIR}/gvc/gvplugin.h"
+    "#include <graphviz/gvplugin.h>\n")
+
+  add_library(graphviz_dot_static INTERFACE)
+  target_include_directories(graphviz_dot_static SYSTEM INTERFACE
+    "${GRAPHVIZ_COMPAT_INCLUDE_DIR}"
+    "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include"
+  )
+  target_link_libraries(graphviz_dot_static INTERFACE
+    graphviz::gvc
+    graphviz::cgraph
+    graphviz::cdt
+    graphviz::pathplan
+    graphviz::xdot
+    graphviz::private::common
+    graphviz::private::util
+    graphviz_plugin_dot_layout
+    graphviz_plugin_pango
+    graphviz_dotgen
+    PkgConfig::PANGOCAIRO
+    ZLIB::ZLIB
+  )
+  return()
+endif()
+
 include(ExternalProject)
 include(FetchContent)
 find_package(EXPAT REQUIRED)

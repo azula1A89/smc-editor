@@ -4,6 +4,12 @@
 
 Graphviz 上游使用 Autotools，不是 CMake 子项目。CMake 通过 FetchContent 下载 Graphviz 16.1.0 发布源码包，再由 `ExternalProject` 在独立构建目录运行 Graphviz 的 `configure` 和 `make`，最后将 `libgvc`、`dot_layout` 插件和 Pango 文本布局插件的静态归档链接到示例。项目也会关闭 `BUILD_SHARED_LIBS`，以静态方式链接 `deps/` 中由 CMake 构建的依赖库。系统提供的 Pango、Cairo、Expat、zlib、OpenGL 和窗口系统库仍是动态运行时依赖；这不承诺生成完全静态的操作系统可执行文件。
 
+在 Windows 上，Graphviz 改由 vcpkg 的 `x64-windows-static` triplet 构建。
+其余依赖继续通过 FetchContent 以静态库构建，MSVC 使用静态 C/C++ 运行时。
+配置时将 `$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake` 传给
+`CMAKE_TOOLCHAIN_FILE`，最终 Release 文件为单个 `smc-editor.exe`；系统
+组件（例如 OpenGL 和 Windows API）仍由操作系统提供。
+
 ## 依赖
 
 - CMake 3.24+、C/C++ 编译器、GNU Make、Git

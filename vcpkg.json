@@ -1,0 +1,15 @@
+{
+  "name": "smc-editor",
+  "version-string": "0.1.0",
+  "builtin-baseline": "74f5ea45ca78988784b810ad9bbb148ea7ff76d8",
+  "dependencies": [
+    {
+      "name": "graphviz",
+      "default-features": false
+    },
+    {
+      "name": "pkgconf",
+      "host": true
+    }
+  ]
+}
