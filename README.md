@@ -46,6 +46,19 @@ Launch the editor with an SMC file:
 
 If no file is specified, the application opens with its built-in example.
 
+### Windows
+
+Install Visual Studio 2022 or newer with the **Desktop development with C++**
+workload and clone [vcpkg](https://github.com/microsoft/vcpkg). From a
+Developer PowerShell, run:
+
+```powershell
+cmake -S . -B build -DBUILD_TESTING=OFF `
+  -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+  "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+cmake --build build --config Release
+```
+
 ## Documentation
 
 See [Detail.md](Detail.md) for additional build notes, usage guidance, and technical details.

@@ -44,6 +44,19 @@ cmake --build build --parallel
 
 如果未指定文件，应用将打开内置示例。
 
+### Windows
+
+安装 Visual Studio 2022 或更新版本并勾选“使用 C++ 的桌面开发”工作负载，
+然后克隆 [vcpkg](https://github.com/microsoft/vcpkg)。在 Developer PowerShell
+中执行：
+
+```powershell
+cmake -S . -B build -DBUILD_TESTING=OFF `
+  -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+  "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+cmake --build build --config Release
+```
+
 ## 文档
 
 更多构建说明、使用指南和技术细节请参见 [Detail.md](Detail.md)。

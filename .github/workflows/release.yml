@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  build-and-release:
+  build-linux:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
@@ -60,3 +60,54 @@ jobs:
         with:
           generate_release_notes: true
           files: smc-editor-linux-x86_64.tar.gz
+
+  build-windows:
+    runs-on: windows-2025
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 74f5ea45ca78988784b810ad9bbb148ea7ff76d8
+
+      - name: Configure and build
+        run: |
+          cmake -S . -B build -DBUILD_TESTING=OFF `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+          cmake --build build --config Release
+
+      - name: Verify standalone executable
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path build/Release/smc-editor.exe
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vswhere -latest -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          $dumpbin = Get-ChildItem "$vsInstall\VC\Tools\MSVC" `
+            -Recurse -Filter dumpbin.exe |
+            Where-Object { $_.FullName -match '\\Hostx64\\x64\\dumpbin.exe$' } |
+            Select-Object -Last 1
+          if (-not $dumpbin) {
+            throw "dumpbin.exe was not found in the Visual Studio installation."
+          }
+          $dependencies = & $dumpbin.FullName /DEPENDENTS $exe |
+            Where-Object { $_ -match '^\s+\S+\.dll\s*$' } |
+            ForEach-Object { $_.Trim() }
+          $nonSystem = $dependencies |
+            Where-Object { $_ -notmatch '^(KERNEL32|USER32|GDI32|SHELL32|OLE32|OLEAUT32|ADVAPI32|COMDLG32|WINSPOOL|OPENGL32|GLU32|IMM32|VERSION|SHLWAPI|WINMM|WS2_32|DWRITE|CRYPT32|BCRYPT|RPCRT4|DWMAPI|UXTHEME|SETUPAPI|DBGHELP|MSIMG32|USERENV|NTDLL)\.dll$' }
+          if ($nonSystem) {
+            throw "smc-editor.exe has external DLL dependencies: $($nonSystem -join ', ')"
+          }
+          if ((Get-ChildItem build/Release -File -Filter *.dll).Count -ne 0) {
+            throw "The release output contains DLL files."
+          }
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: build/Release/smc-editor.exe

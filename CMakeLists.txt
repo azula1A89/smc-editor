@@ -11,6 +11,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Keep CMake dependencies in deps/ static even when reusing a shared build cache.
 set(BUILD_SHARED_LIBS OFF)
+if(MSVC)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY
+    "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+    CACHE STRING "MSVC runtime library" FORCE
+  )
+  add_compile_options(/utf-8)
+endif()
 
 add_subdirectory(deps)
 
@@ -20,7 +27,9 @@ add_library(dot_layout STATIC
 )
 target_include_directories(dot_layout PUBLIC include)
 target_link_libraries(dot_layout PRIVATE graphviz_dot_static)
-add_dependencies(dot_layout graphviz_static_build)
+if(TARGET graphviz_static_build)
+  add_dependencies(dot_layout graphviz_static_build)
+endif()
 
 add_library(app_log STATIC src/log.cpp)
 target_include_directories(app_log PUBLIC include)
