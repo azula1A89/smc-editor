@@ -73,11 +73,24 @@ jobs:
           vcpkgGitCommitId: 74f5ea45ca78988784b810ad9bbb148ea7ff76d8
 
       - name: Configure and build
+        shell: pwsh
         run: |
-          cmake -S . -B build -DBUILD_TESTING=OFF `
-            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
-            -DSMC_EDITOR_USE_RELEASE_PKGCONFIG=ON `
-            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+          $maxAttempts = 3
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            cmake -S . -B build -DBUILD_TESTING=OFF `
+              -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+              -DSMC_EDITOR_USE_RELEASE_PKGCONFIG=ON `
+              "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+            if ($LASTEXITCODE -eq 0) {
+              break
+            }
+            if ($attempt -eq $maxAttempts) {
+              exit $LASTEXITCODE
+            }
+            $delay = 5 * $attempt
+            Write-Host "CMake configure failed with exit code $LASTEXITCODE; retrying in $delay seconds (attempt $($attempt + 1) of $maxAttempts)."
+            Start-Sleep -Seconds $delay
+          }
           cmake --build build --config Release
 
       - name: Verify standalone executable
