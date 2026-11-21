@@ -62,6 +62,11 @@ cmake -S . -B build -DBUILD_TESTING=OFF `
 cmake --build build --config Release
 ```
 
+本地构建仍使用 vcpkg 默认的源码构建方式。Windows 发布 CI 则从固定的
+[依赖发布包](https://github.com/azula1A89/smc-editor-windows-deps/releases/tag/v0.1.0)
+恢复 vcpkg 包，缓存未命中时直接失败。vcpkg 基线、覆盖端口、triplet 或
+MSVC 环境变化时，应更新工作流中的发布版本和校验值。
+
 ## 文档
 
 更多构建说明、使用指南和技术细节请参见 [Detail.md](Detail.md)。

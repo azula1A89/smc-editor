@@ -64,6 +64,12 @@ cmake -S . -B build -DBUILD_TESTING=OFF `
 cmake --build build --config Release
 ```
 
+Local builds use vcpkg's normal source-build behavior. Windows release CI
+instead restores vcpkg packages from the pinned
+[dependency release](https://github.com/azula1A89/smc-editor-windows-deps/releases/tag/v0.1.0)
+and fails on cache misses. Update the release and checksum in the workflow when
+the vcpkg baseline, overlay ports, triplets, or MSVC environment change.
+
 ## Documentation
 
 See [Detail.md](Detail.md) for additional build notes, usage guidance, and technical details.
