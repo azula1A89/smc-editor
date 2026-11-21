@@ -13,6 +13,11 @@ https://github.com/user-attachments/assets/5cfe3e06-39d9-4964-97de-bfec31b2acde
 - 在源代码与图表元素之间导航。
 - 根据 SMC 定义生成 `.hpp` 和 `.cpp` 文件。
 
+预编译版本可在 Releases 页面获取：
+
+- [Linux x64](https://github.com/azula1A89/smc-editor/releases/latest/download/smc-editor-linux-x86_64.tar.gz)
+- [Windows x64](https://github.com/azula1A89/smc-editor/releases/latest/download/smc-editor.exe)
+
 ## 构建和运行
 
 ### 环境要求
