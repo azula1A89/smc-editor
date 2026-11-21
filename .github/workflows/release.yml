@@ -72,14 +72,35 @@ jobs:
         with:
           vcpkgGitCommitId: 74f5ea45ca78988784b810ad9bbb148ea7ff76d8
 
+      - name: Download and verify Windows dependency cache
+        shell: pwsh
+        run: |
+          $archive = "$env:RUNNER_TEMP/smc-editor-windows-x64-vcpkg-cache.zip"
+          $expected = "4ff013866631d895bc3726ef41f3dd54ecdc87ffe54ff334357d2dbc4c47b921"
+          $url = "https://github.com/azula1A89/smc-editor-windows-deps/releases/download/v0.1.0/smc-editor-windows-x64-vcpkg-cache.zip"
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ine $expected) {
+            throw "Windows dependency package checksum mismatch."
+          }
+          $destination = "$env:RUNNER_TEMP/smc-deps"
+          New-Item -ItemType Directory -Force $destination | Out-Null
+          tar -xf $archive -C $destination
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path "$destination/cache" -PathType Container)) {
+            throw "Windows dependency package does not contain a cache directory."
+          }
+
       - name: Configure and build
         shell: pwsh
+        env:
+          VCPKG_BINARY_SOURCES: clear;files,${{ runner.temp }}/smc-deps/cache,read
         run: |
           $maxAttempts = 3
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             cmake -S . -B build -DBUILD_TESTING=OFF `
               -DVCPKG_TARGET_TRIPLET=x64-windows-static `
               -DSMC_EDITOR_USE_RELEASE_PKGCONFIG=ON `
+              -DVCPKG_INSTALL_OPTIONS=--only-binarycaching `
               "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
             if ($LASTEXITCODE -eq 0) {
               break
