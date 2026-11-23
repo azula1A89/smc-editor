@@ -18,7 +18,7 @@ https://github.com/user-attachments/assets/5cfe3e06-39d9-4964-97de-bfec31b2acde
 Pre-built binaries are available on the releases page: 
 
 - [Linux x64](https://github.com/azula1A89/smc-editor/releases/latest/download/smc-editor-linux-x86_64.tar.gz)
-- [Windows x64](https://github.com/azula1A89/smc-editor/releases/latest/download/smc-editor.exe)
+- [Windows x64](https://github.com/azula1A89/smc-editor/releases/latest/download/smc-editor-windows-x86_64.zip)
 
 ## Build and run
 
