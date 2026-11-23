@@ -16,7 +16,7 @@ https://github.com/user-attachments/assets/5cfe3e06-39d9-4964-97de-bfec31b2acde
 预编译版本可在 Releases 页面获取：
 
 - [Linux x64](https://github.com/azula1A89/smc-editor/releases/latest/download/smc-editor-linux-x86_64.tar.gz)
-- [Windows x64](https://github.com/azula1A89/smc-editor/releases/latest/download/smc-editor.exe)
+- [Windows x64](https://github.com/azula1A89/smc-editor/releases/latest/download/smc-editor-windows-x86_64.zip)
 
 ## 构建和运行
 
