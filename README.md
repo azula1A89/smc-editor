@@ -14,6 +14,7 @@ https://github.com/user-attachments/assets/5cfe3e06-39d9-4964-97de-bfec31b2acde
 - Explore state maps, states, and transitions in an interactive diagram.
 - Navigate between source code and diagram elements.
 - Generate `.hpp` and `.cpp` files from an SMC definition.
+- Copy a host-class TODO checklist from the current editor contents via File → Generate → generate to-do list. 
 
 Pre-built binaries are available on the releases page: 
 

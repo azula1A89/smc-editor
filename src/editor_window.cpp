@@ -24,6 +24,20 @@ void log_cpp_generation_success(AppContext& app, const CppGenerationFiles& files
                       files.source_path.string() + "'");
 }
 
+void copy_cpp_todo(AppContext& app) {
+    try {
+        const auto todo = generate_cpp_todo(app.editor->GetText(), app.input_file);
+        if (!ImGui::GetPlatformIO().Platform_SetClipboardTextFn) {
+            app.log.write(LogLevel::error, "C++ generator", "Clipboard is unavailable.");
+            return;
+        }
+        ImGui::SetClipboardText(todo.c_str());
+        app.log.write(LogLevel::info, "C++ generator", "Sent host class TODO list to clipboard.");
+    } catch (const std::exception& error) {
+        app.log.write(LogLevel::error, "C++ generator", error.what());
+    }
+}
+
 bool open_source_file(AppContext& app, const std::filesystem::path& path) {
     if (path.extension() != ".sm") {
         app.log.write(LogLevel::error, "File", "Only .sm files can be opened.");
@@ -436,6 +450,8 @@ void render_editor_window(AppContext& app) {
             if (ImGui::BeginMenu("generate")) {
                 if (ImGui::MenuItem("generate .hpp and .cpp"))
                     request_file_selector(app, SelectorMode::directory);
+                if (ImGui::MenuItem("generate to-do list"))
+                    copy_cpp_todo(app);
                 ImGui::EndMenu();
             }
             ImGui::EndMenu();

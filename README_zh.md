@@ -12,6 +12,7 @@ https://github.com/user-attachments/assets/5cfe3e06-39d9-4964-97de-bfec31b2acde
 - 通过交互式图表查看状态映射、状态和转换。
 - 在源代码与图表元素之间导航。
 - 根据 SMC 定义生成 `.hpp` 和 `.cpp` 文件。
+- 通过 File → Generate → generate to-do list，根据当前编辑器内容生成宿主类待办清单并复制到剪贴板。
 
 预编译版本可在 Releases 页面获取：
 

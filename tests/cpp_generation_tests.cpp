@@ -65,6 +65,35 @@ void test_invalid_source(const std::filesystem::path& directory) {
             "Invalid source created output files");
 }
 
+void test_todo_generation(const std::filesystem::path& directory) {
+    const std::string source =
+        "%start Main::Ready\n%class Owner\n%map Main\n%%\n"
+        "Ready\nEntry { begin(); }\n"
+        "{ go(value: int) [ctxt.enabled() && ctxt.count > value] nil { update(value); } }\n%%\n";
+    const auto todo = generate_cpp_todo(source, directory / "incomplete.sm");
+    require(todo.find("void begin(); // action") != std::string::npos &&
+                todo.find("enabled (guard function reference)") != std::string::npos &&
+                todo.find("count (guard member reference)") != std::string::npos &&
+                todo.find("update (action): determine declaration") != std::string::npos,
+            "TODO generation did not include host references from incomplete source");
+
+    bool files_rejected = false;
+    try {
+        (void)generate_cpp_files(source, directory / "incomplete.sm");
+    } catch (const std::runtime_error&) {
+        files_rejected = true;
+    }
+    require(files_rejected, "C++ file generation accepted an incomplete definition");
+
+    bool parse_rejected = false;
+    try {
+        (void)generate_cpp_todo("%map Main\n", directory / "invalid.sm");
+    } catch (const std::runtime_error& error) {
+        parse_rejected = std::string(error.what()).find("invalid.sm:") != std::string::npos;
+    }
+    require(parse_rejected, "TODO generation did not report parsing diagnostics");
+}
+
 void test_editor_menu(const std::filesystem::path& directory) {
     const std::string source =
         "%start Main::Ready\n%class Context\n%header context.h\n%map Main\n%%\n"
@@ -85,6 +114,13 @@ void test_editor_menu(const std::filesystem::path& directory) {
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
     io.Fonts->AddFontFromMemoryCompressedTTF(
         static_cast<const void*>(&dejavu), dejavuSize, 15.0f);
+
+    std::string clipboard = "previous clipboard contents";
+    auto& platform = ImGui::GetPlatformIO();
+    platform.Platform_ClipboardUserData = &clipboard;
+    platform.Platform_SetClipboardTextFn = [](ImGuiContext*, const char* text) {
+        *static_cast<std::string*>(ImGui::GetPlatformIO().Platform_ClipboardUserData) = text;
+    };
 
     const auto editor_frame = [&](float x, float y, std::optional<bool> mouse = std::nullopt) {
         io.AddMousePosEvent(x, y);
@@ -165,7 +201,7 @@ void test_editor_menu(const std::filesystem::path& directory) {
     const auto select_directory = [&] {
         click_button(selector_main_area(), "Select");
     };
-    const auto generate_from_menu = [&] {
+    const auto generate_from_menu = [&](const char* item = "generate .hpp and .cpp") {
         editor_frame(550, 350);
         ImGuiWindow* editor_window = ImGui::FindWindowByName("SMC Editor");
         const auto menu_bar_id = editor_window->GetID("##MenuBar");
@@ -179,11 +215,43 @@ void test_editor_menu(const std::filesystem::path& directory) {
         require(popups.size() > 1 && popups[1].Window,
                 "Generate submenu did not open");
         ImGuiWindow* generate_menu = popups[1].Window;
-        click(find_item(generate_menu, generate_menu->GetID("generate .hpp and .cpp"),
-                        "generate .hpp and .cpp"));
+        click(find_item(generate_menu, generate_menu->GetID(item), item));
     };
 
     auto& selector = FileSelector::Instance();
+    const std::string unsaved_source =
+        "%start Main::Ready\n%class Owner\n%map Main\n%%\n"
+        "Ready\nEntry { unsaved_action(); }\n{ go [ctxt.ready()] nil {} }\n%%\n";
+    app.editor->SetText(unsaved_source);
+    generate_from_menu("generate to-do list");
+    require(!selector.IsOpen() &&
+                clipboard == generate_cpp_todo(unsaved_source, app.input_file) &&
+                clipboard.find("void unsaved_action();") != std::string::npos &&
+                app.document_modified(),
+            "TODO menu did not copy the current unsaved source");
+    require(app.log.snapshot().records.back().level == LogLevel::info,
+            "TODO menu did not report its clipboard operation");
+
+    const auto previous_clipboard = clipboard;
+    app.editor->SetText("%map Main\n");
+    generate_from_menu("generate to-do list");
+    auto todo_records = app.log.snapshot().records;
+    require(clipboard == previous_clipboard && !selector.IsOpen() &&
+                todo_records.back().level == LogLevel::error &&
+                todo_records.back().detail.find(app.input_file + ":") != std::string::npos,
+            "Invalid TODO source changed the clipboard or failed to report diagnostics");
+
+    app.editor->SetText(unsaved_source);
+    const auto set_clipboard = platform.Platform_SetClipboardTextFn;
+    platform.Platform_SetClipboardTextFn = nullptr;
+    generate_from_menu("generate to-do list");
+    todo_records = app.log.snapshot().records;
+    require(clipboard == previous_clipboard && todo_records.back().level == LogLevel::error &&
+                todo_records.back().detail.find("Clipboard is unavailable") != std::string::npos,
+            "Missing clipboard callback was not reported");
+    platform.Platform_SetClipboardTextFn = set_clipboard;
+    app.editor->SetText(source);
+
     const auto default_directory = std::filesystem::canonical(directory);
     const auto other_directory = directory / "other";
     require(std::filesystem::create_directory(other_directory), "Could not create output directory");
@@ -477,6 +545,7 @@ int main() {
 #endif
         test_generation_and_write(directory);
         test_invalid_source(directory);
+        test_todo_generation(directory);
         test_editor_menu(directory);
         std::filesystem::remove_all(directory);
     } catch (const std::exception& error) {

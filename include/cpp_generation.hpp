@@ -13,4 +13,6 @@ struct CppGenerationFiles {
 
 CppGenerationFiles generate_cpp_files(
     std::string_view source, const std::filesystem::path& input_path);
+std::string generate_cpp_todo(
+    std::string_view source, const std::filesystem::path& input_path);
 void write_cpp_files(const CppGenerationFiles& files);

@@ -80,6 +80,8 @@ SMC 解析和语法校验错误会以红色背景标记编辑器中的行号和�
 
 编辑器的 `ast` 菜单按 state map、state、transition、guard 层级提供快捷跳转；点击节点选中其完整源码并聚焦对应画布元素，transition 聚焦全部 guard edges，guard 聚焦单条 edge。没有源码范围的合成节点不显示，源码修改后菜单暂不可用，直到最新分析成功。`file` 菜单使用 [ImGuiFileSelector](https://github.com/goossens/ImGuiFileSelector)（[MIT 许可](https://github.com/goossens/ImGuiFileSelector/blob/v1.93.0/LICENSE)）打开 `.sm` 文件；每次选择 `generate .hpp and .cpp` 时，选择输出目录（默认为当前 `.sm` 文件所在目录），根据当前编辑器内容生成同名 `.hpp` 和 `.cpp`。取消不会生成文件；若输出文件已存在，需确认后才覆盖，生成或写入失败时会在日志窗口显示诊断。
 
+`file` > `generate` > `generate to-do list` 从当前编辑器内容生成宿主类声明待办清单并复制到剪贴板，无需保存或选择目录。源码必须解析成功，但无需通过完整语义校验；清单中的建议需人工检查。解析或生成失败时保留剪贴板并在日志中报告诊断。
+
 `file` > `new` 选择目录并输入文件名，立即创建并打开 SMC 模板。未输入扩展名时自动补 `.sm`；文件名主体须为非关键字的 ASCII C++ 标识符，用作模板的类名和头文件名。已有文件须确认后才覆盖。`file` > `save` 或 Ctrl+S 保存当前文件；未保存修改会在窗口标题的文件名后显示 `*`，保存或恢复至已保存内容后消失。新建、打开其他文件或关闭窗口时，如有未保存修改，可选择保存、放弃或取消；保存失败时保留当前文档并在日志中报告错误。
 
 日志接口位于 [include/log.hpp](include/log.hpp)：`DiagnosticLog::write` 接收等级、来源和详情，并记录产生时间；写入、清空和快照均可跨线程安全调用。默认保留最近 10,000 条记录，超出时淘汰最旧记录；同时输出到标准错误。后台分析的诊断仅在对应结果被接受时发布，过期结果不会显示或输出。状态窗口按 Debug、Info、Warning、Error 着色，可分别开关等级并按来源的大小写敏感子串过滤；空来源过滤显示全部。多行记录计为一条，窗口按行裁剪渲染；Clear 清空历史，过滤不会删除记录。
