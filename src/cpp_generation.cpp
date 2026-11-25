@@ -53,16 +53,16 @@ CppGenerationFiles generate_cpp_files(
     if (stem.empty())
         throw std::invalid_argument("Input file must have a filename");
 
-    CppGenerationFiles files;
-    files.header_path = input_path.parent_path() / (stem.string() + ".hpp");
-    files.source_path = input_path.parent_path() / (stem.string() + ".cpp");
-
     smc::Diagnostics diagnostics;
     auto fsm = parse_fsm(source, input_path, diagnostics);
 
     smc::SyntaxChecker checker(diagnostics);
     if (!checker.check(fsm, "c++"))
         throw std::runtime_error(describe_diagnostics(diagnostics));
+
+    CppGenerationFiles files;
+    files.header_path = input_path.parent_path() / (fsm.fsm_class + ".hpp");
+    files.source_path = input_path.parent_path() / (fsm.fsm_class + ".cpp");
 
     std::ostringstream header;
     smc::CppHeaderGenerator header_generator(header, files.header_path.filename().string());
