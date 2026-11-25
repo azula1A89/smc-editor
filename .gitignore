@@ -2,3 +2,4 @@
 build*/
 .cache
 .vscode
+deps/graph_editor/GraphEditorContext.*

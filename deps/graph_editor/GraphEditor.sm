@@ -1,0 +1,63 @@
+%start StartMap::Start
+%class GraphEditor
+%fsmclass GraphEditorContext
+%header graph_editor.h
+
+%map StartMap
+%%
+Start
+{
+	left_click[ctxt.none_selected()]				nil{}
+			[ctxt.node_hovered()]					Select{}
+			[ctxt.edge_hovered()]					Select{}
+			[ctxt.cluster_hovered()]				Select{}
+	double_click[ctxt.none_selected()]				CreateNode{}
+				[ctxt.node_hovered()]				Select/push(EditProperty){}
+				[ctxt.edge_hovered()]				Select/push(EditProperty){}
+				[ctxt.cluster_hovered()]			Select/push(EditProperty){}
+}
+
+Select
+Entry { select_current_item(); }
+Exit { unselect_current_item(); }
+{
+	left_shift_down[ctxt.node_selected()]			push(CreateEdge){ set_source(); }
+	left_click[ctxt.none_selected()]				Start{}
+			  [ctxt.node_hovered()] 				nil{ toggle_select_current_item(); }
+			  [ctxt.edge_hovered()]					nil{ toggle_select_current_item(); }
+			  [ctxt.cluster_hovered()]				nil{ toggle_select_current_item(); }
+	double_click[ctxt.node_hovered()]				push(EditProperty){}
+				[ctxt.edge_hovered()]				push(EditProperty){}
+				[ctxt.cluster_hovered()]			push(EditProperty){}
+}
+
+EditProperty
+Entry{ show_popup("property window"); }
+Exit{ close_popup("property window"); }
+{
+	cancel_pressed									pop{}
+	ok_pressed										pop{ apply(); }
+}
+
+CreateNode
+Entry{ show_popup("create node window"); }
+Exit{ close_popup("create node window"); }
+{
+	cancel_pressed									Start{}
+	ok_pressed										Select{ set_as_current_item(); }
+}
+
+CreateEdge
+Entry{ begin_edge_candidate(); }
+Exit{ end_edge_candidate(); }
+{
+	left_click[ctxt.node_hovered()]					pop{ set_target(); add_edge(); set_as_current_item();}
+			  [!ctxt.node_hovered()]				pop{}
+	esc_down										pop{}
+	Default											nil{}
+}
+
+
+
+
+%%
