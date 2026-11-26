@@ -20,6 +20,7 @@
 class TrieAutoComplete;
 class AnalysisWorker;
 class AnalysisCoordinator;
+class GraphEditor;
 
 enum class FileAction { none, new_file, open_file, open_recent, close_window };
 
@@ -121,6 +122,7 @@ public:
     DiagnosticViewState diagnostic_view;
     std::unique_ptr<AnalysisWorker> worker;
     std::unique_ptr<AnalysisCoordinator> coordinator;
+    std::unique_ptr<GraphEditor> graph_editor;
     std::optional<GraphFocus> focus;
     std::optional<CanvasFocus> canvas_focus;
     std::optional<CppGenerationFiles> pending_cpp_generation;

@@ -56,6 +56,8 @@ add_custom_command(
 add_library(app_ui STATIC
   src/GraphEditorContext.cpp
   src/graph_editor.cpp
+  src/graph_editor_actions.cpp
+  src/graph_edit_service.cpp
   src/app_context.cpp
   src/user_settings.cpp
   src/analysis.cpp
@@ -87,6 +89,9 @@ if(BUILD_TESTING)
   target_link_libraries(make_graph_tests PRIVATE app_ui)
   target_compile_definitions(make_graph_tests PRIVATE TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   add_test(NAME make_graph_tests COMMAND make_graph_tests)
+  add_executable(graph_edit_tests tests/graph_edit_tests.cpp)
+  target_link_libraries(graph_edit_tests PRIVATE app_ui)
+  add_test(NAME graph_edit_tests COMMAND graph_edit_tests)
   add_executable(performance_pipeline_tests tests/performance_pipeline_tests.cpp)
   target_link_libraries(performance_pipeline_tests PRIVATE app_ui)
   target_compile_definitions(performance_pipeline_tests PRIVATE TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")

@@ -9,6 +9,7 @@
 
 #include <analysis.hpp>
 #include <app_context.hpp>
+#include <graph_editor.hpp>
 
 AppContext::AppContext() = default;
 
@@ -44,6 +45,7 @@ void AppContext::initialize(std::string source_file, std::function<void()> resul
     coordinator = std::make_unique<AnalysisCoordinator>(
         contents.has_value(), AnalysisCoordinator::Clock::now());
     worker = std::make_unique<AnalysisWorker>(std::move(result_ready));
+    graph_editor = std::make_unique<GraphEditor>(*this);
 }
 
 bool AppContext::document_modified() const {
