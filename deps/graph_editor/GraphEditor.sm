@@ -1,63 +1,58 @@
 %start StartMap::Start
 %class GraphEditor
 %fsmclass GraphEditorContext
-%header graph_editor.h
+%header graph_editor.hpp
 
 %map StartMap
 %%
 Start
 {
-	left_click[ctxt.none_selected()]				nil{}
-			[ctxt.node_hovered()]					Select{}
-			[ctxt.edge_hovered()]					Select{}
-			[ctxt.cluster_hovered()]				Select{}
-	double_click[ctxt.none_selected()]				CreateNode{}
-				[ctxt.node_hovered()]				Select/push(EditProperty){}
-				[ctxt.edge_hovered()]				Select/push(EditProperty){}
-				[ctxt.cluster_hovered()]			Select/push(EditProperty){}
+	left_click[ctxt.hit_nothing()]				nil{ log("Start click nothing->nil"); }
+			[ctxt.hit_node()]					Select{ log("Start click node->Select"); }
+			[ctxt.hit_edge()]					Select{ log("Start click edge->Select"); }
+			[ctxt.hit_cluster()]				Select{ log("Start click cluster->Select"); }
+	double_click[ctxt.hit_nothing()]			CreateNode{ log("Start double click nothing->CreateNode"); }
+				[ctxt.hit_node()]				Select/push(EditProperty){ log("Start double click node->EditProperty"); }
+				[ctxt.hit_edge()]				Select/push(EditProperty){ log("Start double click edge->EditProperty"); }
+				[ctxt.hit_cluster()]			Select/push(EditProperty){ log("Start double click cluster->EditProperty"); }
 }
 
 Select
-Entry { select_current_item(); }
-Exit { unselect_current_item(); }
+Entry { select_current_item(); log("Enter Select");}
+Exit { unselect_current_item(); log("Exit Select");}
 {
-	left_shift_down[ctxt.node_selected()]			push(CreateEdge){ set_source(); }
-	left_click[ctxt.none_selected()]				Start{}
-			  [ctxt.node_hovered()] 				nil{ toggle_select_current_item(); }
-			  [ctxt.edge_hovered()]					nil{ toggle_select_current_item(); }
-			  [ctxt.cluster_hovered()]				nil{ toggle_select_current_item(); }
-	double_click[ctxt.node_hovered()]				push(EditProperty){}
-				[ctxt.edge_hovered()]				push(EditProperty){}
-				[ctxt.cluster_hovered()]			push(EditProperty){}
+	left_shift_down[ctxt.is_node_selected()]	push(CreateEdge){ set_source_node(); log("Select node && shift(l) down->CreateEdge");}
+	left_click[ctxt.hit_nothing()]				Start{ log("Select click nothing->Start"); }
+			  [ctxt.hit_node()] 				nil{ toggle_select_current_item(); log("Select && click node->nil, toggle node focus");}
+			  [ctxt.hit_edge()]					nil{ toggle_select_current_item(); log("Select && click edge->nil, toggle node edge");}
+			  [ctxt.hit_cluster()]				nil{ toggle_select_current_item(); log("Select && click cluster->nil, toggle cluster focus");}
+	double_click[ctxt.hit_node()]				push(EditProperty){log("Select double click node->EditProperty");}
+				[ctxt.hit_edge()]				push(EditProperty){log("Select double click edge->EditProperty");}
+				[ctxt.hit_cluster()]			push(EditProperty){log("Select double click cluster->EditProperty");}
 }
 
 EditProperty
-Entry{ show_popup("property window"); }
-Exit{ close_popup("property window"); }
+Entry{ open_popup("property window"); }
 {
-	cancel_pressed									pop{}
-	ok_pressed										pop{ apply(); }
+	button_cancel_pressed						pop{ }
+	button_ok_pressed							pop{ }
 }
 
 CreateNode
-Entry{ show_popup("create node window"); }
-Exit{ close_popup("create node window"); }
+Entry{ open_popup("create node window"); }
 {
-	cancel_pressed									Start{}
-	ok_pressed										Select{ set_as_current_item(); }
+	button_cancel_pressed						Start{}
+	button_ok_pressed							Select{ set_as_current_item(); }
 }
 
 CreateEdge
 Entry{ begin_edge_candidate(); }
 Exit{ end_edge_candidate(); }
 {
-	left_click[ctxt.node_hovered()]					pop{ set_target(); add_edge(); set_as_current_item();}
-			  [!ctxt.node_hovered()]				pop{}
-	esc_down										pop{}
-	Default											nil{}
+	left_click[ctxt.hit_node()]					pop{ set_target_node(); add_edge(); set_as_current_item();}
+			  [!ctxt.hit_node()]				pop{}
+	esc_down									pop{}
+	Default										nil{}
 }
-
-
-
 
 %%

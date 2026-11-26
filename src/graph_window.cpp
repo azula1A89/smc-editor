@@ -14,6 +14,7 @@
 #include <analysis.hpp>
 #include <dot_layout.hpp>
 #include <ui_windows.hpp>
+#include <graph_editor.hpp>
 
 namespace {
 
@@ -303,6 +304,7 @@ std::optional<dot_layout::Point> focused_graph_point(
 }
 
 void render_graph_window(AppContext& app) {
+    static GraphEditor graph_editor(app);
     auto& canvas = app.canvas;
     auto& settings = app.settings;
     auto* log = &app.log;
@@ -611,8 +613,18 @@ void render_graph_window(AppContext& app) {
                             app.editor->GetNumberOfCursors()};
                     }
                 }
+                graph_editor.left_click();
             }
             canvas.click_started = false;
+        }
+        if ( ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) ) {
+            graph_editor.double_click();
+        }
+        if ( ImGui::IsKeyDown(ImGuiKey_LeftShift) ) {
+            graph_editor.left_shift_down();
+        }
+        if ( ImGui::IsKeyDown(ImGuiKey_Escape) ) {
+            graph_editor.esc_down();
         }
 
         std::unordered_set<std::string_view> focused_nodes;

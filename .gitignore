@@ -2,4 +2,5 @@
 build*/
 .cache
 .vscode
-deps/graph_editor/GraphEditorContext.*
+src/GraphEditorContext.cpp
+include/GraphEditorContext.hpp

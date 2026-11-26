@@ -35,7 +35,27 @@ add_library(app_log STATIC src/log.cpp)
 target_include_directories(app_log PUBLIC include)
 target_link_libraries(app_log PUBLIC Threads::Threads)
 
+
+set(generated_dir "${CMAKE_CURRENT_BINARY_DIR}/generated/graph_editor")
+set(generated_header "${CMAKE_CURRENT_SOURCE_DIR}/include/GraphEditorContext.hpp")
+set(generated_source "${CMAKE_CURRENT_SOURCE_DIR}/src/GraphEditorContext.cpp")
+
+add_custom_command(
+    OUTPUT "${generated_header}" "${generated_source}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${generated_dir}"
+    COMMAND "$<TARGET_FILE:smc_cpp>" -c++ -d "${generated_dir}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/deps/graph_editor/GraphEditor.sm"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${generated_dir}/GraphEditorContext.hpp" "${generated_header}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${generated_dir}/GraphEditorContext.cpp" "${generated_source}"
+    DEPENDS smc_cpp "${CMAKE_CURRENT_SOURCE_DIR}/deps/graph_editor/GraphEditor.sm"
+    VERBATIM
+)
+
 add_library(app_ui STATIC
+  src/GraphEditorContext.cpp
+  src/graph_editor.cpp
   src/app_context.cpp
   src/user_settings.cpp
   src/analysis.cpp
@@ -45,7 +65,7 @@ add_library(app_ui STATIC
   src/graph_window.cpp
   src/log_window.cpp
 )
-target_include_directories(app_ui PUBLIC include)
+target_include_directories(app_ui PUBLIC include "${smc_cpp_SOURCE_DIR}/include/headers/c++")
 target_link_libraries(app_ui PUBLIC app_log dot_layout imgui imgui_file_selector glew_s smc_core_s Threads::Threads)
 
 add_executable(smc-editor src/main.cpp src/application.cpp)
