@@ -2,8 +2,17 @@
 #include <stdexcept>
 #include <string>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+#include <graph_editor.hpp>
 #include <analysis.hpp>
 #include <graph_edit_service.hpp>
+
+#if defined(_WIN32) && (defined(min) || defined(max))
+#error Windows min/max macros must not leak into application code
+#endif
 
 namespace {
 
